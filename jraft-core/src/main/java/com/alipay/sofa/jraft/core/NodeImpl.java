@@ -267,6 +267,7 @@ public class NodeImpl implements Node, RaftServerService {
                 return;
             }
 
+            // 批量处理task
             this.tasks.add(event);
             if (this.tasks.size() >= NodeImpl.this.raftOptions.getApplyBatch() || endOfBatch) {
                 executeApplyingTasks(this.tasks);
@@ -747,7 +748,9 @@ public class NodeImpl implements Node, RaftServerService {
             return false;
         }
 
+        // 初始化定时任务管理器
         this.timerManager = new TimerManager();
+        // 初始化线程池
         if (!this.timerManager.init(this.options.getTimerPoolSize())) {
             LOG.error("Fail to init timer manager.");
             return false;
@@ -755,6 +758,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         // Init timers
         final String suffix = getNodeId().toString();
+        // 投票定时任务
         this.voteTimer = new RepeatedTimer("JRaft-VoteTimer-" + suffix, this.options.getElectionTimeoutMs()) {
 
             @Override
@@ -767,6 +771,7 @@ public class NodeImpl implements Node, RaftServerService {
                 return randomTimeout(timeoutMs);
             }
         };
+        // 选举leader任务
         this.electionTimer = new RepeatedTimer("JRaft-ElectionTimer-" + suffix, this.options.getElectionTimeoutMs()) {
 
             @Override
@@ -1166,6 +1171,7 @@ public class NodeImpl implements Node, RaftServerService {
         this.writeLock.lock();
         try {
             final int size = tasks.size();
+            // 非leader节点，异常
             if (this.state != State.STATE_LEADER) {
                 final Status st = new Status();
                 if (this.state != State.STATE_TRANSFERRING) {
@@ -1174,6 +1180,7 @@ public class NodeImpl implements Node, RaftServerService {
                     st.setError(RaftError.EBUSY, "Is transferring leadership.");
                 }
                 LOG.debug("Node {} can't apply, status={}.", getNodeId(), st);
+                // 失败回调
                 for (int i = 0; i < size; i++) {
                     Utils.runClosureInThread(tasks.get(i).done, st);
                 }
@@ -1182,10 +1189,12 @@ public class NodeImpl implements Node, RaftServerService {
             final List<LogEntry> entries = new ArrayList<>(size);
             for (int i = 0; i < size; i++) {
                 final LogEntryAndClosure task = tasks.get(i);
+                // 指定了term，必须term相等才能执行task
                 if (task.expectedTerm != -1 && task.expectedTerm != this.currTerm) {
                     LOG.debug("Node {} can't apply task whose expectedTerm={} doesn't match currTerm={}.", getNodeId(),
                         task.expectedTerm, this.currTerm);
                     if (task.done != null) {
+                        // 失败回调
                         final Status st = new Status(RaftError.EPERM, "expected_term=%d doesn't match current_term=%d",
                             task.expectedTerm, this.currTerm);
                         Utils.runClosureInThread(task.done, st);
@@ -1992,6 +2001,7 @@ public class NodeImpl implements Node, RaftServerService {
                 deadNodes.addPeer(peer);
             }
         }
+        // 存活的节点数超过一半，更新leader时间戳
         if (aliveCount >= peers.size() / 2 + 1) {
             updateLastLeaderTimestamp(startLease);
             return true;
