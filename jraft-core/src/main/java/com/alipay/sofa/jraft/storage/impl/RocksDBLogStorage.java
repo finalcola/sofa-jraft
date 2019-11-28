@@ -62,6 +62,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Log storage based on rocksdb.
+ * 基于RocksDB的存储实现
  *
  * @author boyan (boyan@alibaba-inc.com)
  *
@@ -94,7 +95,9 @@ public class RocksDBLogStorage implements LogStorage, Describer {
     private DBOptions                       dbOptions;
     private WriteOptions                    writeOptions;
     private final List<ColumnFamilyOptions> cfOptions     = new ArrayList<>();
+    // 数据文件句柄
     private ColumnFamilyHandle              defaultHandle;
+    // 配置文件句柄
     private ColumnFamilyHandle              confHandle;
     private ReadOptions                     totalOrderReadOptions;
     private Statistics                      statistics;
@@ -153,7 +156,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
             this.writeOptions.setSync(this.sync);
             this.totalOrderReadOptions = new ReadOptions();
             this.totalOrderReadOptions.setTotalOrderSeek(true);
-
+            // 初始话RocksDB并加载保存的配置信息
             return initAndLoad(opts.getConfigurationManager());
         } catch (final RocksDBException e) {
             LOG.error("Fail to init RocksDBLogStorage, path={}.", this.path, e);
@@ -164,6 +167,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
 
     }
 
+    // 初始话RocksDB并加载保存的配置信息
     private boolean initAndLoad(final ConfigurationManager confManager) throws RocksDBException {
         this.hasLoadFirstLogIndex = false;
         this.firstLogIndex = 1;
@@ -174,9 +178,11 @@ public class RocksDBLogStorage implements LogStorage, Describer {
         columnFamilyDescriptors.add(new ColumnFamilyDescriptor("Configuration".getBytes(), cfOption));
         // Default column family to store user data log entry.
         columnFamilyDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, cfOption));
-
+        // 开启RocksDB
         openDB(columnFamilyDescriptors);
+        // 加载本地log保存的配置，并添加到ConfigurationManager
         load(confManager);
+        // 模板方法
         return onInitLoaded();
     }
 
@@ -185,7 +191,9 @@ public class RocksDBLogStorage implements LogStorage, Describer {
      */
     public static final byte[] FIRST_LOG_IDX_KEY = Utils.getBytes("meta/firstLogIndex");
 
+    // 加载本地磁盘保存的配置，并添加到ConfigurationManager
     private void load(final ConfigurationManager confManager) {
+        // 确定db不为空
         checkState();
         try (final RocksIterator it = this.db.newIterator(this.confHandle, this.totalOrderReadOptions)) {
             it.seekToFirst();
@@ -195,6 +203,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
 
                 // LogEntry index
                 if (ks.length == 8) {
+                    // 反序列化配置，并添加到ConfigurationManager
                     final LogEntry entry = this.logEntryDecoder.decode(bs);
                     if (entry != null) {
                         if (entry.getType() == EntryType.ENTRY_TYPE_CONFIGURATION) {
@@ -210,15 +219,16 @@ public class RocksDBLogStorage implements LogStorage, Describer {
                         }
                     } else {
                         LOG.warn("Fail to decode conf entry at index {}, the log data is: {}.", Bits.getLong(ks, 0),
-                            BytesUtil.toHex(bs));
+                                BytesUtil.toHex(bs));
                     }
                 } else {
+                    // 截断log日志中startIndex到firstIndexKept的数据
                     if (Arrays.equals(FIRST_LOG_IDX_KEY, ks)) {
                         setFirstLogIndex(Bits.getLong(bs, 0));
                         truncatePrefixInBackground(0L, this.firstLogIndex);
                     } else {
                         LOG.warn("Unknown entry in configuration storage key={}, value={}.", BytesUtil.toHex(ks),
-                            BytesUtil.toHex(bs));
+                                BytesUtil.toHex(bs));
                     }
                 }
                 it.next();
@@ -274,12 +284,14 @@ public class RocksDBLogStorage implements LogStorage, Describer {
      * @param template write batch template
      */
     private boolean executeBatch(final WriteBatchTemplate template) {
+        // 检查是否初始化RocksDB
         this.readLock.lock();
         if (this.db == null) {
             LOG.warn("DB not initialized or destroyed.");
             this.readLock.unlock();
             return false;
         }
+        // 批量写入
         try (final WriteBatch batch = new WriteBatch()) {
             template.execute(batch);
             this.db.write(this.writeOptions, batch);
@@ -383,6 +395,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
             if (this.hasLoadFirstLogIndex && index < this.firstLogIndex) {
                 return null;
             }
+            // 读取RocksDB
             final byte[] keyBytes = getKeyBytes(index);
             final byte[] bs = onDataGet(index, getValueFromRocksDB(keyBytes));
             if (bs != null) {
@@ -464,6 +477,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
         }
     }
 
+    // 根据配置决定是否执行sync回调
     private void doSync() throws IOException {
         if (this.sync) {
             onSync();
@@ -485,6 +499,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
                     addDataBatch(entry, batch);
                 }
             }
+            // 根据配置决定是否执行sync回调
             doSync();
         });
 
@@ -512,6 +527,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
 
     }
 
+    // 截断log日志中startIndex到firstIndexKept的数据
     private void truncatePrefixInBackground(final long startIndex, final long firstIndexKept) {
         // delete logs in background.
         Utils.runInThread(() -> {

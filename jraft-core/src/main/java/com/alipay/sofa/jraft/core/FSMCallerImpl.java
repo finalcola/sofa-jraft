@@ -64,6 +64,8 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * The finite state machine caller implementation.
+ * 封装对业务 StateMachine 的状态转换的调用以及日志的写入等。
+ * 一个有限状态机的实现，做必要的检查、请求合并提交和并发处理等
  *
  * @author boyan (boyan@alibaba-inc.com)
  *
@@ -225,6 +227,7 @@ public class FSMCallerImpl implements FSMCaller {
         this.lastAppliedLogIndexListeners.add(listener);
     }
 
+    // 添加到任务队列
     private boolean enqueueTask(final EventTranslator<ApplyTask> tpl) {
         if (this.shutdownLatch != null) {
             // Shutting down
@@ -543,12 +546,15 @@ public class FSMCallerImpl implements FSMCaller {
         iter.next();
     }
 
+    // 保存快照时调用，将最新的index、term、confEntry封装为SnapshotMeta设置到回调中，并通知状态机
     private void doSnapshotSave(final SaveSnapshotClosure done) {
         Requires.requireNonNull(done, "SaveSnapshotClosure is null");
         final long lastAppliedIndex = this.lastAppliedIndex.get();
+        // 保存lastIndex、term
         final RaftOutter.SnapshotMeta.Builder metaBuilder = RaftOutter.SnapshotMeta.newBuilder() //
             .setLastIncludedIndex(lastAppliedIndex) //
             .setLastIncludedTerm(this.lastAppliedTerm);
+        // 保存最新的ConfigurationEntry
         final ConfigurationEntry confEntry = this.logManager.getConfiguration(lastAppliedIndex);
         if (confEntry == null || confEntry.isEmpty()) {
             LOG.error("Empty conf entry for lastAppliedIndex={}", lastAppliedIndex);
@@ -556,12 +562,14 @@ public class FSMCallerImpl implements FSMCaller {
                 lastAppliedIndex));
             return;
         }
+        // 保存节点信息
         for (final PeerId peer : confEntry.getConf()) {
             metaBuilder.addPeers(peer.toString());
         }
         for (final PeerId peer : confEntry.getConf().getLearners()) {
             metaBuilder.addLearners(peer.toString());
         }
+        // 保存oldConf的节点信息
         if (confEntry.getOldConf() != null) {
             for (final PeerId peer : confEntry.getOldConf()) {
                 metaBuilder.addOldPeers(peer.toString());
@@ -575,6 +583,7 @@ public class FSMCallerImpl implements FSMCaller {
             done.run(new Status(RaftError.EINVAL, "snapshot_storage create SnapshotWriter failed"));
             return;
         }
+        // 通知状态机
         this.fsm.onSnapshotSave(writer, done);
     }
 
@@ -618,6 +627,7 @@ public class FSMCallerImpl implements FSMCaller {
         return sb.append(']').toString();
     }
 
+    // 加载快照时调用
     private void doSnapshotLoad(final LoadSnapshotClosure done) {
         Requires.requireNonNull(done, "LoadSnapshotClosure is null");
         final SnapshotReader reader = done.start();
@@ -625,6 +635,7 @@ public class FSMCallerImpl implements FSMCaller {
             done.run(new Status(RaftError.EINVAL, "open SnapshotReader failed"));
             return;
         }
+        // 读取metadata
         final RaftOutter.SnapshotMeta meta = reader.load();
         if (meta == null) {
             done.run(new Status(RaftError.EINVAL, "SnapshotReader load meta failed"));
@@ -638,12 +649,14 @@ public class FSMCallerImpl implements FSMCaller {
         final LogId lastAppliedId = new LogId(this.lastAppliedIndex.get(), this.lastAppliedTerm);
         final LogId snapshotId = new LogId(meta.getLastIncludedIndex(), meta.getLastIncludedTerm());
         if (lastAppliedId.compareTo(snapshotId) > 0) {
+            // 过期的snapshot,返回失败
             done.run(new Status(
                 RaftError.ESTALE,
                 "Loading a stale snapshot last_applied_index=%d last_applied_term=%d snapshot_index=%d snapshot_term=%d",
                 lastAppliedId.getIndex(), lastAppliedId.getTerm(), snapshotId.getIndex(), snapshotId.getTerm()));
             return;
         }
+        // 状态机加载
         if (!this.fsm.onSnapshotLoad(reader)) {
             done.run(new Status(-1, "StateMachine onSnapshotLoad failed"));
             final RaftException e = new RaftException(EnumOutter.ErrorType.ERROR_TYPE_STATE_MACHINE,
@@ -661,8 +674,10 @@ public class FSMCallerImpl implements FSMCaller {
             }
             this.fsm.onConfigurationCommitted(conf);
         }
+        // 更新index和term
         this.lastAppliedIndex.set(meta.getLastIncludedIndex());
         this.lastAppliedTerm = meta.getLastIncludedTerm();
+        // 调用回调
         done.run(Status.OK());
     }
 

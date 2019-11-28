@@ -67,6 +67,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
         }
         final String metaPath = path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         final File metaFile = new File(metaPath);
+        // 从已有meta文件加载
         try {
             if (metaFile.exists()) {
                 return metaTable.loadFromFile(metaPath);
@@ -95,6 +96,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
 
     @Override
     public void close(final boolean keepDataOnError) throws IOException {
+        // 写入磁盘，删除原快照文件并将temp文件重命名为快照文件
         this.snapshotStorage.close(this, keepDataOnError);
     }
 

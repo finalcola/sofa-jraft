@@ -70,6 +70,7 @@ import com.google.protobuf.ZeroByteStringHelper;
 
 /**
  * Replicator for replicating log entry from leader to followers.
+ * 用于 leader 向 follower 复制日志，也就是 raft 中的 appendEntries 调用，包括心跳存活检查等
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 10:32:02 AM
@@ -244,7 +245,7 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * Notify replicator event(such as created, error, destroyed) to replicatorStateListener which is implemented by users.
-     *
+     * 通知node中注册的ReplicatorStateListener
      * @param replicator replicator object
      * @param event      replicator's state listener event type
      * @param status     replicator's error detailed status
@@ -524,6 +525,7 @@ public class Replicator implements ThreadId.OnError {
         return this.inflights.poll();
     }
 
+    // 调度心跳超时检查方法
     private void startHeartbeatTimer(final long startMs) {
         final long dueTime = startMs + this.options.getDynamicHeartBeatTimeoutMs();
         try {
@@ -798,6 +800,7 @@ public class Replicator implements ThreadId.OnError {
             throw new IllegalArgumentException("Invalid ReplicatorOptions.");
         }
         final Replicator r = new Replicator(opts, raftOptions);
+        // 检查是否可以连接到从节点
         if (!r.rpcService.connect(opts.getPeerId().getEndpoint())) {
             LOG.error("Fail to init sending channel to {}.", opts.getPeerId());
             // Return and it will be retried later.
@@ -818,12 +821,16 @@ public class Replicator implements ThreadId.OnError {
         }
 
         // Start replication
-        r.id = new ThreadId(r, r);
+        // 开启复制任务
+        r.id = new ThreadId(r/*data*/, r/*OnError*/);
+        // 获取threadId的锁
         r.id.lock();
+        // 通知node中注册的ReplicatorStateListener
         notifyReplicatorStatusListener(r, ReplicatorEvent.CREATED);
         LOG.info("Replicator={}@{} is started", r.id, r.options.getPeerId());
         r.catchUpClosure = null;
         r.lastRpcSendTimestamp = Utils.monotonicMs();
+        // 调度心跳超时检查方法
         r.startHeartbeatTimer(Utils.nowMs());
         // id.unlock in sendEmptyEntries
         r.sendEmptyEntries(false);
@@ -1037,6 +1044,7 @@ public class Replicator implements ThreadId.OnError {
         Utils.runClosureInThread(savedClosure, savedClosure.getStatus());
     }
 
+    // 心跳超时，调用ThreadId的onError方法
     private static void onTimeout(final ThreadId id) {
         if (id != null) {
             id.setError(RaftError.ETIMEDOUT.getNumber());

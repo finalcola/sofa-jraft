@@ -74,6 +74,7 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Load metadata infos from byte buffer.
+     * 从远程发送的buffer中加载metadata
      */
     public boolean loadFromIoBufferAsRemote(final ByteBuffer buf) {
         if (buf == null) {
@@ -171,6 +172,7 @@ public class LocalSnapshotMetaTable {
         return loadFromPbMeta(pbMeta);
     }
 
+    // 加载meta
     private boolean loadFromPbMeta(final LocalSnapshotPbMeta pbMeta) {
         if (pbMeta.hasMeta()) {
             this.meta = pbMeta.getMeta();

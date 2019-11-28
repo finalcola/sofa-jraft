@@ -113,6 +113,7 @@ public class RaftGroupService {
      * @param startRpcServer whether to start RPC server.
      */
     public synchronized Node start(final boolean startRpcServer) {
+        // 校验
         if (this.started) {
             return this.node;
         }
@@ -125,8 +126,9 @@ public class RaftGroupService {
         }
         //Adds RPC server to Server.
         NodeManager.getInstance().addAddress(this.serverId.getEndpoint());
-
+        // 创建并初始化RaftNode
         this.node = RaftServiceFactory.createAndInitRaftNode(this.groupId, this.serverId, this.nodeOptions);
+        // 启动RpcServer
         if (startRpcServer) {
             this.rpcServer.start();
         } else {

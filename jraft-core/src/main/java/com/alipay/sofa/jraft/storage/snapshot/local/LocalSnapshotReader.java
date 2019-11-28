@@ -78,6 +78,7 @@ public class LocalSnapshotReader extends SnapshotReader {
 
     @Override
     public boolean init(final Void v) {
+        // 拼接文件地址
         final File dir = new File(this.path);
         if (!dir.exists()) {
             LOG.error("No such path %s for snapshot reader.", this.path);
@@ -86,6 +87,7 @@ public class LocalSnapshotReader extends SnapshotReader {
         }
         final String metaPath = this.path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         try {
+            // 加载meta和fileMap
             return this.metaTable.loadFromFile(metaPath);
         } catch (final IOException e) {
             LOG.error("Fail to load snapshot meta {}.", metaPath);

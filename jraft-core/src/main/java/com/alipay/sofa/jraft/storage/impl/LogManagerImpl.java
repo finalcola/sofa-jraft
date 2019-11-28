@@ -68,7 +68,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * LogManager implementation.
- *
+ * 负责对底层存储的调用，对调用做缓存、批量提交、必要的检查和优化
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 4:42:20 PM
@@ -326,6 +326,7 @@ public class LogManagerImpl implements LogManager {
                     this.configManager.add(conf);
                 }
             }
+            // 添加到内存的队列
             if (!entries.isEmpty()) {
                 done.setFirstLogIndex(entries.get(0).getId().getIndex());
                 this.logsInMemory.addAll(entries);
@@ -339,9 +340,11 @@ public class LogManagerImpl implements LogManager {
                 event.done = done;
             };
             while (true) {
+                // 向本地队列添加event
                 if (tryOfferEvent(done, translator)) {
                     break;
                 } else {
+                    // 添加失败，重试
                     retryTimes++;
                     if (retryTimes > APPEND_LOG_RETRY_TIMES) {
                         reportError(RaftError.EBUSY.getNumber(), "LogManager is busy, disk queue overload.");
@@ -351,6 +354,7 @@ public class LogManagerImpl implements LogManager {
                 }
             }
             doUnlock = false;
+            // 唤醒所有等待锁的任务
             if (!wakeupAllWaiter(this.writeLock)) {
                 notifyLastLogIndexListeners();
             }
@@ -373,6 +377,7 @@ public class LogManagerImpl implements LogManager {
         });
     }
 
+    // 向本地队列添加event
     private boolean tryOfferEvent(final StableClosure done, final EventTranslator<StableClosureEvent> translator) {
         if (this.stopped) {
             Utils.runClosureInThread(done, new Status(RaftError.ESTOP, "Log manager is stopped."));
@@ -394,16 +399,20 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    // 唤醒所有等待锁的任务
     private boolean wakeupAllWaiter(final Lock lock) {
+        // 等待队列为空，解锁后返回
         if (this.waitMap.isEmpty()) {
             lock.unlock();
             return false;
         }
+        // 清空等待队列后解锁
         final List<WaitMeta> wms = new ArrayList<>(this.waitMap.values());
         final int errCode = this.stopped ? RaftError.ESTOP.getNumber() : RaftError.SUCCESS.getNumber();
         this.waitMap.clear();
         lock.unlock();
 
+        // 重新调度等待任务
         final int waiterCount = wms.size();
         for (int i = 0; i < waiterCount; i++) {
             final WaitMeta wm = wms.get(i);
@@ -603,15 +612,19 @@ public class LogManagerImpl implements LogManager {
             if (meta.getLastIncludedIndex() <= this.lastSnapshotId.getIndex()) {
                 return;
             }
+            // 从快照读取配置
             final Configuration conf = confFromMeta(meta);
             final Configuration oldConf = oldConfFromMeta(meta);
 
+            // 设置最新的快照
             final ConfigurationEntry entry = new ConfigurationEntry(new LogId(meta.getLastIncludedIndex(),
                 meta.getLastIncludedTerm()), conf, oldConf);
             this.configManager.setSnapshot(entry);
+            // 读取index对应的logEntry对应的term
             final long term = unsafeGetTerm(meta.getLastIncludedIndex());
             final long savedLastSnapshotIndex = this.lastSnapshotId.getIndex();
 
+            // 更新快照的index和term
             this.lastSnapshotId.setIndex(meta.getLastIncludedIndex());
             this.lastSnapshotId.setTerm(meta.getLastIncludedTerm());
 
@@ -619,6 +632,7 @@ public class LogManagerImpl implements LogManager {
                 this.appliedId = this.lastSnapshotId.copy();
             }
 
+            // 截断之前的数据
             if (term == 0) {
                 // last_included_index is larger than last_index
                 // FIXME: what if last_included_index is less than first_index?
@@ -658,6 +672,7 @@ public class LogManagerImpl implements LogManager {
         return oldConf;
     }
 
+    // 从快照读取配置
     private Configuration confFromMeta(final SnapshotMeta meta) {
         final Configuration conf = new Configuration();
         for (int i = 0; i < meta.getPeersCount(); i++) {
@@ -700,6 +715,7 @@ public class LogManagerImpl implements LogManager {
         return sb.toString();
     }
 
+    // 读取内存中的LogEntry
     protected LogEntry getEntryFromMemory(final long index) {
         LogEntry entry = null;
         if (!this.logsInMemory.isEmpty()) {
@@ -770,6 +786,7 @@ public class LogManagerImpl implements LogManager {
         return getTermFromLogStorage(index);
     }
 
+    // 读取磁盘中保存的term信息
     private long getTermFromLogStorage(final long index) {
         LogEntry entry = this.logStorage.getEntry(index);
         if (entry != null) {
@@ -828,6 +845,7 @@ public class LogManagerImpl implements LogManager {
         return c.lastLogId.getIndex();
     }
 
+    // 读取index对应的logEntry对应的term
     private long unsafeGetTerm(final long index) {
         if (index == 0) {
             return 0;
@@ -839,10 +857,12 @@ public class LogManagerImpl implements LogManager {
         if (index == lss.getIndex()) {
             return lss.getTerm();
         }
+        // 先读取内存
         final LogEntry entry = getEntryFromMemory(index);
         if (entry != null) {
             return entry.getId().getTerm();
         }
+        // 读取磁盘中保存的term信息
         return getTermFromLogStorage(index);
     }
 
@@ -921,7 +941,9 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    // 截断firstIndexKept之前的数据
     private boolean truncatePrefix(final long firstIndexKept) {
+        // 截断内存中保存的log
         int index = 0;
         for (final int size = this.logsInMemory.size(); index < size; index++) {
             final LogEntry entry = this.logsInMemory.get(index);
@@ -943,6 +965,7 @@ public class LogManagerImpl implements LogManager {
             this.lastLogIndex = firstIndexKept - 1;
         }
         LOG.debug("Truncate prefix, firstIndexKept is :{}", firstIndexKept);
+        // 截断保存的配置
         this.configManager.truncatePrefix(firstIndexKept);
         final TruncatePrefixClosure c = new TruncatePrefixClosure(firstIndexKept);
         offerEvent(c, EventType.TRUNCATE_PREFIX);

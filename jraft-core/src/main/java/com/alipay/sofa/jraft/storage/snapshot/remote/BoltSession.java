@@ -278,12 +278,13 @@ public class BoltSession implements Session {
             if (this.finished) {
                 return;
             }
-            // throttle
+            // throttle.限流
             long newMaxCount = maxCount;
             if (this.snapshotThrottle != null) {
                 newMaxCount = this.snapshotThrottle.throttledByThroughput(maxCount);
                 if (newMaxCount == 0) {
                     // Reset count to make next rpc retry the previous one
+                    // 重新调度
                     this.requestBuilder.setCount(0);
                     this.timer = this.timerManager.schedule(this::onTimer, this.copyOptions.getRetryIntervalMs(),
                         TimeUnit.MILLISECONDS);
@@ -293,6 +294,7 @@ public class BoltSession implements Session {
             this.requestBuilder.setCount(newMaxCount);
             final RpcRequests.GetFileRequest request = this.requestBuilder.build();
             LOG.debug("Send get file request {} to peer {}", request, this.endpoint);
+            // 发送rpc请求
             this.rpcCall = this.rpcService.getFile(this.endpoint, request, this.copyOptions.getTimeoutMs(), this.done);
         } finally {
             this.lock.unlock();

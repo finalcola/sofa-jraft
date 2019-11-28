@@ -43,6 +43,7 @@ import com.alipay.sofa.jraft.util.ThreadId;
 
 /**
  * Replicator group for a raft group.
+ * 用于单个 RAFT Group 管理所有的 replicator，必要的权限检查和派发
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 1:54:51 PM
@@ -124,6 +125,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
 
         opts.setReplicatorType(replicatorType);
         opts.setPeerId(peer);
+        // 添加从节点复制组件
         final ThreadId rid = Replicator.start(opts, this.raftOptions);
         if (rid == null) {
             LOG.error("Fail to start replicator to peer={}.", peer);

@@ -181,13 +181,19 @@ public class NodeImpl implements Node, RaftServerService {
     private final PeerId                                                   serverId;
     /** Other services */
     private final ConfigurationCtx                                         confCtx;
+    // 存储实现
     private LogStorage                                                     logStorage;
+    // 元信息存储,记录 raft 实现的内部状态，比如当前 term,、投票给哪个节点等信息
     private RaftMetaStorage                                                metaStorage;
     private ClosureQueue                                                   closureQueue;
+    // 保存配置列表和快照
     private ConfigurationManager                                           configManager;
+    // 负责对底层存储的调用，对调用做缓存、批量提交、必要的检查和优化
     private LogManager                                                     logManager;
+    // 封装对业务 StateMachine 的状态转换的调用以及日志的写入等，一个有限状态机的实现，做必要的检查、请求合并提交和并发处理等
     private FSMCaller                                                      fsmCaller;
     private BallotBox                                                      ballotBox;
+    // 用于 snapshot 实际存储、远程安装、复制的管理
     private SnapshotExecutor                                               snapshotExecutor;
     private ReplicatorGroup                                                replicatorGroup;
     private final List<Closure>                                            shutdownContinuations    = new ArrayList<>();
@@ -209,6 +215,7 @@ public class NodeImpl implements Node, RaftServerService {
     private NodeMetrics                                                    metrics;
 
     private NodeId                                                         nodeId;
+    // 默认为 DefaultJRaftServiceFactory
     private JRaftServiceFactory                                            serviceFactory;
 
     /** ReplicatorStateListeners */
@@ -245,6 +252,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * Event handler.
+     * 处理事件的handler(批量处理)
      *
      * @author boyan (boyan@alibaba-inc.com)
      *
@@ -267,8 +275,9 @@ public class NodeImpl implements Node, RaftServerService {
                 return;
             }
 
-            // 批量处理task
+
             this.tasks.add(event);
+            // 批量处理task
             if (this.tasks.size() >= NodeImpl.this.raftOptions.getApplyBatch() || endOfBatch) {
                 executeApplyingTasks(this.tasks);
                 this.tasks.clear();
@@ -498,6 +507,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     public NodeImpl(final String groupId, final PeerId serverId) {
         super();
+        // groupId只能由字母、数字、下划线构成
         if (groupId != null) {
             Utils.verifyGroupId(groupId);
         }
@@ -505,6 +515,7 @@ public class NodeImpl implements Node, RaftServerService {
         this.serverId = serverId != null ? serverId.copy() : null;
         this.state = State.STATE_UNINITIALIZED;
         this.currTerm = 0;
+        // 更新lastLeaderTimestamp
         updateLastLeaderTimestamp(Utils.monotonicMs());
         this.confCtx = new ConfigurationCtx(this);
         this.wakingCandidate = null;
@@ -531,6 +542,7 @@ public class NodeImpl implements Node, RaftServerService {
         return this.snapshotExecutor.init(opts);
     }
 
+    // 创建并初始化logStorage、logManager
     private boolean initLogStorage() {
         Requires.requireNonNull(this.fsmCaller, "Null fsm caller");
         this.logStorage = this.serviceFactory.createLogStorage(this.options.getLogUri(), this.raftOptions);
@@ -559,6 +571,7 @@ public class NodeImpl implements Node, RaftServerService {
         return true;
     }
 
+    // 保存快照
     private void handleSnapshotTimeout() {
         this.writeLock.lock();
         try {
@@ -733,11 +746,13 @@ public class NodeImpl implements Node, RaftServerService {
         Requires.requireNonNull(opts, "Null node options");
         Requires.requireNonNull(opts.getRaftOptions(), "Null raft options");
         Requires.requireNonNull(opts.getServiceFactory(), "Null jraft service factory");
+        // 默认为 DefaultJRaftServiceFactory
         this.serviceFactory = opts.getServiceFactory();
         this.options = opts;
         this.raftOptions = opts.getRaftOptions();
         this.metrics = new NodeMetrics(opts.isEnableMetrics());
 
+        // 校验
         if (this.serverId.getIp().equals(Utils.IP_ANY)) {
             LOG.error("Node can't started from IP_ANY.");
             return false;
@@ -792,6 +807,7 @@ public class NodeImpl implements Node, RaftServerService {
                 handleStepDownTimeout();
             }
         };
+        // 保存快照任务
         this.snapshotTimer = new RepeatedTimer("JRaft-SnapshotTimer-" + suffix,
             this.options.getSnapshotIntervalSecs() * 1000) {
 
@@ -803,6 +819,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         this.configManager = new ConfigurationManager();
 
+        // 初始化事件执行队列
         this.applyDisruptor = DisruptorBuilder.<LogEntryAndClosure> newInstance() //
             .setRingBufferSize(this.raftOptions.getDisruptorBufferSize()) //
             .setEventFactory(new LogEntryAndClosureFactory()) //
@@ -810,7 +827,9 @@ public class NodeImpl implements Node, RaftServerService {
             .setProducerType(ProducerType.MULTI) //
             .setWaitStrategy(new BlockingWaitStrategy()) //
             .build();
+        // 添加任务的处理器(批量处理)
         this.applyDisruptor.handleEventsWith(new LogEntryAndClosureHandler());
+        // 添加异常处理（只会打印error日志）
         this.applyDisruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(getClass().getSimpleName()));
         this.applyQueue = this.applyDisruptor.start();
         if (this.metrics.getMetricRegistry() != null) {
@@ -818,19 +837,24 @@ public class NodeImpl implements Node, RaftServerService {
                 new DisruptorMetricSet(this.applyQueue));
         }
 
+        // 创建状态机管理组件
         this.fsmCaller = new FSMCallerImpl();
+        // 创建并初始化logStorage、logManager
         if (!initLogStorage()) {
             LOG.error("Node {} initLogStorage failed.", getNodeId());
             return false;
         }
+        // 创建并初始化MetaStore
         if (!initMetaStorage()) {
             LOG.error("Node {} initMetaStorage failed.", getNodeId());
             return false;
         }
+        // 初始化状态机管理组件
         if (!initFSMCaller(new LogId(0, 0))) {
             LOG.error("Node {} initFSMCaller failed.", getNodeId());
             return false;
         }
+        // 创建投票箱
         this.ballotBox = new BallotBox();
         final BallotBoxOptions ballotBoxOpts = new BallotBoxOptions();
         ballotBoxOpts.setWaiter(this.fsmCaller);
@@ -839,7 +863,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Node {} init ballotBox failed.", getNodeId());
             return false;
         }
-
+        // 初始化快照管理组件
         if (!initSnapshotStorage()) {
             LOG.error("Node {} initSnapshotStorage failed.", getNodeId());
             return false;
@@ -850,6 +874,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Node {} is initialized with inconsistent log, status={}.", getNodeId(), st);
             return false;
         }
+        // 创建ConfigurationEntry并设置初始LogId(0,0)
         this.conf = new ConfigurationEntry();
         this.conf.setId(new LogId());
         // if have log using conf in log, else using conf in options
@@ -886,6 +911,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Fail to init rpc service.");
             return false;
         }
+        // 初始化replicatorGroup
         this.replicatorGroup.init(new NodeId(this.groupId, this.serverId), rgOpts);
 
         this.readOnlyService = new ReadOnlyServiceImpl();
@@ -1167,6 +1193,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    // 处理任务
     private void executeApplyingTasks(final List<LogEntryAndClosure> tasks) {
         this.writeLock.lock();
         try {
@@ -3049,6 +3076,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    // 更新conf
     public void updateConfigurationAfterInstallingSnapshot() {
         this.writeLock.lock();
         try {

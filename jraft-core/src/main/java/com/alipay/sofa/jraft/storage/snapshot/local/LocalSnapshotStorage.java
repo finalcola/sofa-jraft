@@ -46,6 +46,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Snapshot storage based on local file storage.
+ * Snapshot存储实现
  *
  * @author boyan (boyan@alibaba-inc.com)
  *
@@ -56,7 +57,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
     private static final Logger                      LOG       = LoggerFactory.getLogger(LocalSnapshotStorage.class);
 
     private static final String                      TEMP_PATH = "temp";
-    private final ConcurrentMap<Long, AtomicInteger> refMap    = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Long/*snapshot_index*/, AtomicInteger> refMap    = new ConcurrentHashMap<>();
     private final String                             path;
     private Endpoint                                 addr;
     private boolean                                  filterBeforeCopyRemote;
@@ -95,8 +96,10 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         }
     }
 
+    // 删除旧快照文件(只保留最新的快照文件)并读取lastSnapshotIndex
     @Override
     public boolean init(final Void v) {
+        // 创建文件
         final File dir = new File(this.path);
 
         try {
@@ -120,6 +123,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             }
         }
         // delete old snapshot
+        // 读取已存在的snapshot文件
         final List<Long> snapshots = new ArrayList<>();
         final File[] oldFiles = dir.listFiles();
         if (oldFiles != null) {
@@ -136,10 +140,12 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         // TODO: add snapshot watcher
 
         // get last_snapshot_index
+        // 获取最大的snapshot_index
         if (!snapshots.isEmpty()) {
             Collections.sort(snapshots);
             final int snapshotCount = snapshots.size();
 
+            // 删除前n-1个快照文件
             for (int i = 0; i < snapshotCount - 1; i++) {
                 final long index = snapshots.get(i);
                 final String snapshotPath = getSnapshotPath(index);
@@ -163,6 +169,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         refs.incrementAndGet();
     }
 
+    // 删除快照文件
     private boolean destroySnapshot(final String path) {
         LOG.info("Deleting snapshot {}.", path);
         final File file = new File(path);
@@ -196,6 +203,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         return refs;
     }
 
+    // 写入磁盘，删除原快照文件并将temp文件重命名为快照文件
     void close(final LocalSnapshotWriter writer, final boolean keepDataOnError) throws IOException {
         int ret = writer.getCode();
         // noinspection ConstantConditions
@@ -204,6 +212,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 break;
             }
             try {
+                // 写盘
                 if (!writer.sync()) {
                     ret = RaftError.EIO.getNumber();
                     break;
@@ -213,6 +222,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 ret = RaftError.EIO.getNumber();
                 break;
             }
+            // 删除原快照文件并将temp文件重命名为快照文件
             final long oldIndex = getLastSnapshotIndex();
             final long newIndex = writer.getSnapshotIndex();
             if (oldIndex == newIndex) {
@@ -245,6 +255,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             unref(oldIndex);
         } while (false);
         if (ret != 0 && !keepDataOnError) {
+            // 存在异常，删除存储快照文件
             destroySnapshot(writer.getPath());
         }
         if (ret == RaftError.EIO.getNumber()) {
@@ -276,11 +287,14 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             // delete temp
             // TODO: Notify watcher before deleting
             if (new File(snapshotPath).exists() && fromEmpty) {
+                // 删除已存在的temp文件
                 if (!destroySnapshot(snapshotPath)) {
                     break;
                 }
             }
+            // 创建并初始化writer
             writer = new LocalSnapshotWriter(snapshotPath, this, this.raftOptions);
+            // 创建文件夹并会从已有文件加载信息
             if (!writer.init(null)) {
                 LOG.error("Fail to init snapshot writer.");
                 writer = null;
@@ -306,9 +320,11 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             LOG.warn("No data for snapshot reader {}.", this.path);
             return null;
         }
+        // 读取最新的快照文件
         final String snapshotPath = getSnapshotPath(lsIndex);
         final SnapshotReader reader = new LocalSnapshotReader(this, this.snapshotThrottle, this.addr, this.raftOptions,
             snapshotPath);
+        // 加载meta和fileMap
         if (!reader.init(null)) {
             LOG.error("Fail to init reader for path {}.", snapshotPath);
             unref(lsIndex);
@@ -345,6 +361,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             LOG.error("Fail to init copier to {}.", uri);
             return null;
         }
+        // 开启快照任务，复制最新的metadata和文件
         copier.start();
         return copier;
     }

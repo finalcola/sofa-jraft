@@ -44,6 +44,7 @@ import com.google.protobuf.Message;
 public class ProtoBufFile {
 
     static {
+        // 加载raft.desc，解析出序列化的方法
         ProtobufMsgFactory.load();
     }
 
@@ -67,11 +68,13 @@ public class ProtoBufFile {
         final byte[] lenBytes = new byte[4];
         try (final FileInputStream fin = new FileInputStream(file);
                 final BufferedInputStream input = new BufferedInputStream(fin)) {
+            // 读取长度
             readBytes(lenBytes, input);
             final int len = Bits.getInt(lenBytes, 0);
             if (len <= 0) {
                 throw new IOException("Invalid message fullName.");
             }
+            // 读取正文并反序列化
             final byte[] nameBytes = new byte[len];
             readBytes(nameBytes, input);
             final String name = new String(nameBytes);

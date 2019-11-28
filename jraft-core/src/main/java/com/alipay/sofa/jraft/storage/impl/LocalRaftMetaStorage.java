@@ -39,7 +39,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Raft meta storage,it's not thread-safe.
- *
+ * 元信息存储,记录 raft 实现的内部状态，比如当前 term,、投票给哪个节点等信息
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-26 7:30:36 PM
@@ -78,6 +78,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
             LOG.error("Fail to mkdir {}", this.path);
             return false;
         }
+        // 加载本地的meta文件，读取term和投票信息
         if (load()) {
             this.isInited = true;
             return true;
@@ -87,9 +88,12 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
     }
 
     private boolean load() {
+        // 创建ProtoBuf文件操作封装类
         final ProtoBufFile pbFile = newPbFile();
         try {
+            // 加载文件内容
             final StablePBMeta meta = pbFile.load();
+            // 读取meta文件保存的term和投票信息
             if (meta != null) {
                 this.term = meta.getTerm();
                 return this.votedFor.parse(meta.getVotedfor());
@@ -107,6 +111,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         return new ProtoBufFile(this.path + File.separator + RAFT_META);
     }
 
+    // 保存到磁盘（每次更新后都会执行一次保存）
     private boolean save() {
         final long start = Utils.monotonicMs();
         final StablePBMeta meta = StablePBMeta.newBuilder() //

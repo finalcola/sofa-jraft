@@ -53,6 +53,7 @@ public class ConfigurationManager {
 
     /**
      * [1, first_index_kept) are being discarded
+     * 从头开始截断链表中的配置
      */
     public void truncatePrefix(final long firstIndexKept) {
         while (!this.configurations.isEmpty() && this.configurations.peekFirst().getId().getIndex() < firstIndexKept) {
@@ -62,6 +63,7 @@ public class ConfigurationManager {
 
     /**
      * (last_index_kept, infinity) are being discarded
+     * 从尾部开始截断链表
      */
     public void truncateSuffix(final long lastIndexKept) {
         while (!this.configurations.isEmpty() && this.configurations.peekLast().getId().getIndex() > lastIndexKept) {

@@ -65,6 +65,7 @@ public class RemoteFileCopier {
         return this.endpoint;
     }
 
+    // 配置属性，解析uri并与远程节点建立连接
     public boolean init(String uri, final SnapshotThrottle snapshotThrottle, final SnapshotCopierOptions opts) {
         this.rpcService = opts.getRaftClientService();
         this.timerManager = opts.getTimerManager();
@@ -119,11 +120,12 @@ public class RemoteFileCopier {
         }
     }
 
+    // 发送下载文件请求
     public Session startCopyToFile(final String source, final String destPath, final CopyOptions opts)
                                                                                                       throws IOException {
         final File file = new File(destPath);
 
-        // delete exists file.
+        // 删除已有的文件
         if (file.exists()) {
             if (!file.delete()) {
                 LOG.error("Fail to delete destPath: {}.", destPath);
@@ -139,6 +141,7 @@ public class RemoteFileCopier {
                 super.close();
             }
         });
+        // 发送下载请求
         final BoltSession session = newBoltSession(source);
         session.setOutputStream(out);
         session.setDestPath(destPath);
@@ -179,6 +182,7 @@ public class RemoteFileCopier {
         }
     }
 
+    // 创建session，发送请求
     public Session startCopy2IoBuffer(final String source, final ByteBufferCollector destBuf, final CopyOptions opts) {
         final BoltSession session = newBoltSession(source);
         session.setOutputStream(null);
@@ -186,6 +190,7 @@ public class RemoteFileCopier {
         if (opts != null) {
             session.setCopyOptions(opts);
         }
+        // 发送rpc请求
         session.sendNextRpc();
         return session;
     }

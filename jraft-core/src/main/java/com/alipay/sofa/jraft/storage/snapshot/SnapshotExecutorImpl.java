@@ -53,7 +53,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Snapshot executor implementation.
- *
+ * 用于 snapshot 实际存储、远程安装、复制的管理
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-22 5:38:56 PM
@@ -209,6 +209,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         @Override
         public void run(final Status status) {
             this.status = status;
+            // 更新快照
             onSnapshotLoadDone(this.status);
             this.eventLatch.countDown();
         }
@@ -234,6 +235,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         this.fsmCaller = opts.getFsmCaller();
         this.node = opts.getNode();
         this.term = opts.getInitTerm();
+        // 创建snapshot存储组件
         this.snapshotStorage = this.node.getServiceFactory().createSnapshotStorage(opts.getUri(),
             this.node.getRaftOptions());
         if (opts.isFilterBeforeCopyRemote()) {
@@ -242,6 +244,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         if (opts.getSnapshotThrottle() != null) {
             this.snapshotStorage.setSnapshotThrottle(opts.getSnapshotThrottle());
         }
+        // 删除旧快照文件(只保留最新的快照文件)并读取lastSnapshotIndex
         if (!this.snapshotStorage.init(null)) {
             LOG.error("Fail to init snapshot storage.");
             return false;
@@ -250,10 +253,12 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         if (tmp != null && !tmp.hasServerAddr()) {
             tmp.setServerAddr(opts.getAddr());
         }
+        // 创建快照的读取
         final SnapshotReader reader = this.snapshotStorage.open();
         if (reader == null) {
             return true;
         }
+        // 读取meta
         this.loadingSnapshotMeta = reader.load();
         if (this.loadingSnapshotMeta == null) {
             LOG.error("Fail to load meta from {}.", opts.getUri());
@@ -263,8 +268,11 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         LOG.info("Loading snapshot, meta={}.", this.loadingSnapshotMeta);
         this.loadingSnapshot = true;
         this.runningJobs.incrementAndGet();
+        // 封装加载snapshot后的回调任务
         final FirstSnapshotLoadDone done = new FirstSnapshotLoadDone(reader);
+        // 交由fsmCaller调度执行
         Requires.requireTrue(this.fsmCaller.onSnapshotLoad(done));
+        // 等待执行完成
         try {
             done.waitForRun();
         } catch (final InterruptedException e) {
@@ -304,6 +312,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         boolean doUnlock = true;
         this.lock.lock();
         try {
+            // 已关闭或正在保存快照，则回调失败
             if (this.stopped) {
                 Utils.runClosureInThread(done, new Status(RaftError.EPERM, "Is stopped."));
                 return;
@@ -328,6 +337,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 Utils.runClosureInThread(done);
                 return;
             }
+            // 生成快照
             final SnapshotWriter writer = this.snapshotStorage.create();
             if (writer == null) {
                 Utils.runClosureInThread(done, new Status(RaftError.EIO, "Fail to create writer."));
@@ -335,6 +345,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 return;
             }
             this.savingSnapshot = true;
+            // 执行保存快照操作并异步执行回调
             final SaveSnapshotDone saveSnapshotDone = new SaveSnapshotDone(writer, done, null);
             if (!this.fsmCaller.onSnapshotSave(saveSnapshotDone)) {
                 Utils.runClosureInThread(done, new Status(RaftError.EHOSTDOWN, "The raft node is down."));
@@ -380,6 +391,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 writer.setError(ret, "Fail to do snapshot.");
             }
         }
+        // 写入磁盘，删除原快照文件并将temp文件重命名为快照文件
         try {
             writer.close();
         } catch (final IOException e) {
@@ -387,6 +399,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             ret = RaftError.EIO.getNumber();
         }
         boolean doUnlock = true;
+        // 更新内存中的快照信息
         this.lock.lock();
         try {
             if (ret == 0) {
@@ -412,6 +425,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         }
     }
 
+    // 状态机已加载快照后调用,更新logManager中的快照信息并截断日志
     private void onSnapshotLoadDone(final Status st) {
         DownloadingSnapshot m;
         boolean doUnlock = true;
@@ -420,10 +434,12 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             Requires.requireTrue(this.loadingSnapshot, "Not loading snapshot");
             m = this.downloadingSnapshot.get();
             if (st.isOk()) {
+                // 更新index和term
                 this.lastSnapshotIndex = this.loadingSnapshotMeta.getLastIncludedIndex();
                 this.lastSnapshotTerm = this.loadingSnapshotMeta.getLastIncludedTerm();
                 doUnlock = false;
                 this.lock.unlock();
+                // 更新快照
                 this.logManager.setSnapshot(this.loadingSnapshotMeta); //should be out of lock
                 doUnlock = true;
                 this.lock.lock();
@@ -468,6 +484,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         final DownloadingSnapshot ds = new DownloadingSnapshot(request, response, done);
         //DON'T access request, response, and done after this point
         //as the retry snapshot will replace this one.
+        // 注册并开启异步下载快照任务
         if (!registerDownloadingSnapshot(ds)) {
             LOG.warn("Fail to register downloading snapshot");
             // This RPC will be responded by the previous session
@@ -475,6 +492,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         }
         Requires.requireNonNull(this.curCopier, "curCopier");
         try {
+            // 等待下载完成
             this.curCopier.join();
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -482,9 +500,11 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             return;
         }
 
+        // 加载快照文件
         loadDownloadingSnapshot(ds, meta);
     }
 
+    // 加载快照文件
     void loadDownloadingSnapshot(final DownloadingSnapshot ds, final SnapshotMeta meta) {
         SnapshotReader reader;
         this.lock.lock();
@@ -495,11 +515,13 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             }
             Requires.requireNonNull(this.curCopier, "curCopier");
             reader = this.curCopier.getReader();
+            // 下载失败，清理资源并发送响应
             if (!this.curCopier.isOk()) {
                 if (this.curCopier.getCode() == RaftError.EIO.getNumber()) {
                     reportError(this.curCopier.getCode(), this.curCopier.getErrorMsg());
                 }
                 Utils.closeQuietly(reader);
+                // 回调，发送响应
                 ds.done.run(this.curCopier);
                 Utils.closeQuietly(this.curCopier);
                 this.curCopier = null;
@@ -507,6 +529,8 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.runningJobs.countDown();
                 return;
             }
+
+            // close(),清理任务
             Utils.closeQuietly(this.curCopier);
             this.curCopier = null;
             if (reader == null || !reader.isOk()) {
@@ -517,11 +541,13 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.runningJobs.countDown();
                 return;
             }
+            // 标记当前正在加载快照
             this.loadingSnapshot = true;
             this.loadingSnapshotMeta = meta;
         } finally {
             this.lock.unlock();
         }
+        // 加载快照
         final InstallSnapshotDone installSnapshotDone = new InstallSnapshotDone(reader);
         if (!this.fsmCaller.onSnapshotLoad(installSnapshotDone)) {
             LOG.warn("Fail to  call fsm onSnapshotLoad");
@@ -529,6 +555,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         }
     }
 
+    // 注册并开启异步下载快照任务
     @SuppressWarnings("all")
     boolean registerDownloadingSnapshot(final DownloadingSnapshot ds) {
         DownloadingSnapshot saved = null;
@@ -547,6 +574,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 return false;
             }
 
+            // 设置term
             ds.responseBuilder.setTerm(this.term);
             if (ds.request.getTerm() != this.term) {
                 LOG.warn("Register DownloadingSnapshot failed: term mismatch, expect {} but {}.", this.term,
@@ -555,6 +583,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 ds.done.sendResponse(ds.responseBuilder.build());
                 return false;
             }
+            // 比较请求的lastIndex和当前最新的index,如果小于或等于则代表快照不是最新的
             if (ds.request.getMeta().getLastIncludedIndex() <= this.lastSnapshotIndex) {
                 LOG.warn(
                     "Register DownloadingSnapshot failed: snapshot is not newer, request lastIncludedIndex={}, lastSnapshotIndex={}.",
@@ -563,10 +592,12 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 ds.done.sendResponse(ds.responseBuilder.build());
                 return false;
             }
+            // 标记当前正在下载快照
             final DownloadingSnapshot m = this.downloadingSnapshot.get();
             if (m == null) {
                 this.downloadingSnapshot.set(ds);
                 Requires.requireTrue(this.curCopier == null, "Current copier is not null");
+                // 开启下载快照任务
                 this.curCopier = this.snapshotStorage.startToCopyFrom(ds.request.getUri(), newCopierOpts());
                 if (this.curCopier == null) {
                     this.downloadingSnapshot.set(null);
@@ -582,7 +613,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             // A previous snapshot is under installing, check if this is the same
             // snapshot and resume it, otherwise drop previous snapshot as this one is
             // newer
-
+            // 已有一个下载任务正在进行，检查是否是同样的快照，否则会丢弃原下载快照任务
             if (m.request.getMeta().getLastIncludedIndex() == ds.request.getMeta().getLastIncludedIndex()) {
                 // m is a retry
                 // Copy |*ds| to |*m| so that the former session would respond
@@ -591,6 +622,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.downloadingSnapshot.set(ds);
                 result = false;
             } else if (m.request.getMeta().getLastIncludedIndex() > ds.request.getMeta().getLastIncludedIndex()) {
+                // 当前任务是版本更低，返回失败响应
                 // |is| is older
                 LOG.warn("Register DownloadingSnapshot failed:  is installing a newer one, lastIncludeIndex={}",
                     m.request.getMeta().getLastIncludedIndex());
@@ -598,7 +630,9 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                     "A newer snapshot is under installing"));
                 return false;
             } else {
+                // 取消老任务
                 // |is| is newer
+                // 如果正在加载旧快照，返回失败
                 if (this.loadingSnapshot) {
                     LOG.warn("Register DownloadingSnapshot failed: is loading an older snapshot, lastIncludeIndex={}",
                         m.request.getMeta().getLastIncludedIndex());
@@ -607,6 +641,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                     return false;
                 }
                 Requires.requireNonNull(this.curCopier, "curCopier");
+                // 取消老的下载任务
                 this.curCopier.cancel();
                 LOG.warn(
                     "Register DownloadingSnapshot failed:an older snapshot is under installing, cancel downloading, lastIncludeIndex={}",

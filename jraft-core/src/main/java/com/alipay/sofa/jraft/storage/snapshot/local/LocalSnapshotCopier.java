@@ -80,6 +80,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         this.snapshotThrottle = snapshotThrottle;
     }
 
+    // 开启快照任务，复制最新的metadata和文件
     private void startCopy() {
         try {
             internalCopy();
@@ -90,17 +91,21 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         }
     }
 
+    // 开启复制快照任务
     private void internalCopy() throws IOException, InterruptedException {
         // noinspection ConstantConditions
         do {
+            // 向leader发送请求，加载metadata
             loadMetaTable();
             if (!isOk()) {
                 break;
             }
+            // 过滤metadata
             filter();
             if (!isOk()) {
                 break;
             }
+            // 向远程节点复制文件
             final Set<String> files = this.remoteSnapshot.listFiles();
             for (final String file : files) {
                 copyFile(file);
@@ -113,12 +118,15 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             Utils.closeQuietly(this.writer);
             this.writer = null;
         }
+        // 完成
         if (isOk()) {
             this.reader = (LocalSnapshotReader) this.storage.open();
         }
     }
 
+    // 向远程节点复制文件
     void copyFile(final String fileName) throws IOException, InterruptedException {
+        // 如果本地已存在（该文件已经是最新的，则跳过下载）
         if (this.writer.getFileMeta(fileName) != null) {
             LOG.info("Skipped downloading {}", fileName);
             return;
@@ -134,6 +142,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             }
         }
 
+        // 从远程节点下载文件
         final LocalFileMeta meta = (LocalFileMeta) this.remoteSnapshot.getFileMeta(fileName);
         Session session = null;
         try {
@@ -145,6 +154,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                     }
                     return;
                 }
+                // 发送下载文件请求(响应会直接写入到filePath)
                 session = this.copier.startCopyToFile(fileName, filePath, null);
                 if (session == null) {
                     LOG.error("Fail to copy {}", fileName);
@@ -156,6 +166,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             } finally {
                 this.lock.unlock();
             }
+            // 等待下载完成
             session.join(); // join out of lock
             this.lock.lock();
             try {
@@ -163,14 +174,17 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             } finally {
                 this.lock.unlock();
             }
+            // 下载失败
             if (!session.status().isOk() && isOk()) {
                 setError(session.status().getCode(), session.status().getErrorMsg());
                 return;
             }
+            // 添加metadata
             if (!this.writer.addFile(fileName, meta)) {
                 setError(RaftError.EIO, "Fail to add file to writer");
                 return;
             }
+            // metadata刷盘
             if (!this.writer.sync()) {
                 setError(RaftError.EIO, "Fail to sync writer");
             }
@@ -181,6 +195,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         }
     }
 
+    // 向leader发送请求，加载metadata
     private void loadMetaTable() throws InterruptedException {
         final ByteBufferCollector metaBuf = ByteBufferCollector.allocate(0);
         Session session = null;
@@ -193,12 +208,15 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                     }
                     return;
                 }
+                // 创建session，发送请求
                 session = this.copier.startCopy2IoBuffer(Snapshot.JRAFT_SNAPSHOT_META_FILE, metaBuf, null);
                 this.curSession = session;
             } finally {
                 this.lock.unlock();
             }
+            // 等待请求完成
             session.join(); //join out of lock.
+            // 情况当前的session(在锁中执行)
             this.lock.lock();
             try {
                 this.curSession = null;
@@ -210,6 +228,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                 setError(session.status().getCode(), session.status().getErrorMsg());
                 return;
             }
+            // 加载响应中的metadata
             if (!this.remoteSnapshot.getMetaTable().loadFromIoBufferAsRemote(metaBuf.getBuffer())) {
                 LOG.warn("Bad meta_table format");
                 setError(-1, "Bad meta_table format from remote");
@@ -226,6 +245,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
 
     boolean filterBeforeCopy(final LocalSnapshotWriter writer, final SnapshotReader lastSnapshot) throws IOException {
         final Set<String> existingFiles = writer.listFiles();
+        // 筛选出已删除的文件
         final ArrayDeque<String> toRemove = new ArrayDeque<>();
         for (final String file : existingFiles) {
             if (this.remoteSnapshot.getFileMeta(file) == null) {
@@ -239,6 +259,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         for (final String fileName : remoteFiles) {
             final LocalFileMeta remoteMeta = (LocalFileMeta) this.remoteSnapshot.getFileMeta(fileName);
             Requires.requireNonNull(remoteMeta, "remoteMeta");
+            // 如果文件没有校验和，则重新下载
             if (!remoteMeta.hasChecksum()) {
                 // Re-download file if this file doesn't have checksum
                 writer.removeFile(fileName);
@@ -246,6 +267,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                 continue;
             }
 
+            // 比较校验和，不相等则重新下载
             LocalFileMeta localMeta = (LocalFileMeta) writer.getFileMeta(fileName);
             if (localMeta != null) {
                 if (localMeta.hasChecksum() && localMeta.getChecksum().equals(remoteMeta.getChecksum())) {
@@ -273,6 +295,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             if (localMeta.getSource() == FileSource.FILE_SOURCE_LOCAL) {
                 final String sourcePath = lastSnapshot.getPath() + File.separator + fileName;
                 final String destPath = writer.getPath() + File.separator + fileName;
+                // 删除文件
                 FileUtils.deleteQuietly(new File(destPath));
                 try {
                     Files.createLink(Paths.get(destPath), Paths.get(sourcePath));
@@ -322,6 +345,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                 return;
             }
         }
+        // 保存metadata到本地
         this.writer.saveMeta(this.remoteSnapshot.getMetaTable().getMeta());
         if (!this.writer.sync()) {
             LOG.error("Fail to sync snapshot writer path={}", this.writer.getPath());
@@ -329,11 +353,13 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         }
     }
 
+    // 创建远程复制组件
     public boolean init(final String uri, final SnapshotCopierOptions opts) {
         this.copier = new RemoteFileCopier();
         this.cancelled = false;
         this.filterBeforeCopyRemote = opts.getNodeOptions().isFilterBeforeCopyRemote();
         this.remoteSnapshot = new LocalSnapshot(opts.getRaftOptions());
+        // 设置属性并与远程节点建立连接
         return this.copier.init(uri, this.snapshotThrottle, opts);
     }
 
@@ -365,6 +391,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
 
     @Override
     public void start() {
+        // 开启快照任务，复制最新的metadata和文件
         this.future = Utils.runInThread(this::startCopy);
     }
 
