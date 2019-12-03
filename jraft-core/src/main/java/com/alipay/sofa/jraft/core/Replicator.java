@@ -849,6 +849,7 @@ public class Replicator implements ThreadId.OnError {
         // 调度心跳超时检查方法
         r.startHeartbeatTimer(Utils.nowMs());
         // id.unlock in sendEmptyEntries
+        // 发送探针请求，并执行unlock
         r.sendEmptyEntries(false);
         return r.id;
     }

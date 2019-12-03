@@ -125,7 +125,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
 
         opts.setReplicatorType(replicatorType);
         opts.setPeerId(peer);
-        // 添加从节点复制组件
+        // 添加并启动从节点复制组件
         final ThreadId rid = Replicator.start(opts, this.raftOptions);
         if (rid == null) {
             LOG.error("Fail to start replicator to peer={}.", peer);
