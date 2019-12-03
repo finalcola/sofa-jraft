@@ -171,6 +171,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return true;
     }
 
+    // 检查replicator状态，如果为启动，则启动复制；如果阻塞，则解锁
     @Override
     public void checkReplicator(final PeerId peer, final boolean lockNode) {
         final ThreadId rid = this.replicatorMap.get(peer);
@@ -249,12 +250,14 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     @Override
     public ThreadId stopAllAndFindTheNextCandidate(final ConfigurationEntry conf) {
         ThreadId candidate = null;
+        // 获取当前配置中last_index最大的节点
         final PeerId candidateId = findTheNextCandidate(conf);
         if (candidateId != null) {
             candidate = this.replicatorMap.get(candidateId);
         } else {
             LOG.info("Fail to find the next candidate.");
         }
+        // 停止复制
         for (final ThreadId r : this.replicatorMap.values()) {
             if (r != candidate) {
                 Replicator.stop(r);
@@ -268,6 +271,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     @Override
     public PeerId findTheNextCandidate(final ConfigurationEntry conf) {
         PeerId peerId = null;
+        // 返回index最大的节点
         long maxIndex = -1L;
         for (final Map.Entry<PeerId, ThreadId> entry : this.replicatorMap.entrySet()) {
             if (!conf.contains(entry.getKey())) {

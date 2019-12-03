@@ -51,6 +51,7 @@ public abstract class NodeRequestProcessor<T extends Message> extends RpcRequest
 
     @Override
     public Message processRequest(T request, RpcRequestClosure done) {
+        // 获取对应的Node实例处理请求
         final PeerId peer = new PeerId();
         final String peerIdStr = getPeerId(request);
         if (peer.parse(peerIdStr)) {
@@ -60,7 +61,7 @@ public abstract class NodeRequestProcessor<T extends Message> extends RpcRequest
                 return processRequest0((RaftServerService) node, request, done);
             } else {
                 return RpcResponseFactory.newResponse(RaftError.ENOENT, "Peer id not found: %s, group: %s", peerIdStr,
-                    groupId);
+                        groupId);
             }
         } else {
             return RpcResponseFactory.newResponse(RaftError.EINVAL, "Fail to parse peerId: %s", peerIdStr);

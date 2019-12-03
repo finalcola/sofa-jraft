@@ -24,7 +24,7 @@ import com.google.protobuf.Message;
 
 /**
  * RPC request Closure encapsulates the RPC contexts.
- *
+ * RPC请求回调，封装RPC上下文，并在回调中根据Status返回响应
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-28 4:55:24 PM

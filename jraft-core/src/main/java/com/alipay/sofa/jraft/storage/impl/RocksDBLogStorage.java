@@ -574,12 +574,18 @@ public class RocksDBLogStorage implements LogStorage, Describer {
             throw new IllegalArgumentException("Invalid next log index.");
         }
         this.writeLock.lock();
+        // 删除所有已保存的log，并将index设置为nextLogIndex
         try (final Options opt = new Options()) {
+            // 读取对应的entry
             LogEntry entry = getEntry(nextLogIndex);
+            // 关闭底层的RocksDB
             closeDB();
             try {
+                // 销毁
                 RocksDB.destroyDB(this.path, opt);
+                // 模板方法
                 onReset(nextLogIndex);
+                // 重新初始化RocksDB
                 if (initAndLoad(null)) {
                     if (entry == null) {
                         entry = new LogEntry();
@@ -587,6 +593,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
                         entry.setId(new LogId(nextLogIndex, 0));
                         LOG.warn("Entry not found for nextLogIndex {} when reset.", nextLogIndex);
                     }
+                    // 添加entry
                     return appendEntry(entry);
                 } else {
                     return false;

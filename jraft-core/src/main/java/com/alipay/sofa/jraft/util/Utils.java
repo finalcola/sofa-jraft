@@ -313,6 +313,7 @@ public class Utils {
     /**
      * Ensure bolt RPC framework supports pipeline, enable `bolt.rpc.dispatch-msg-list-in-default-executor`
      * system property.
+     * 确定RPC框架支持pipeline
      */
     public static void ensureBoltPipeline() {
         if (RpcConfigManager.dispatch_msg_list_in_default_executor()) {

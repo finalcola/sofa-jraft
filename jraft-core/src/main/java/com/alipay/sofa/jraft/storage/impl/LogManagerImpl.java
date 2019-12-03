@@ -200,7 +200,7 @@ public class LogManagerImpl implements LogManager {
                     .setWaitStrategy(new TimeoutBlockingWaitStrategy(
                         this.raftOptions.getDisruptorPublishEventWaitTimeoutSecs(), TimeUnit.SECONDS)) //
                     .build();
-            this.disruptor.handleEventsWith(new StableClosureEventHandler());
+            this.disruptor.handleEventsWith(new StableClosureEventHandler());   // event处理器
             this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(this.getClass().getSimpleName(),
                     (event, ex) -> reportError(-1, "LogManager handle event error")));
             this.diskQueue = this.disruptor.start();
@@ -305,7 +305,9 @@ public class LogManagerImpl implements LogManager {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
+            // 检查并处理entries和本地log的冲突
             if (!entries.isEmpty() && !checkAndResolveConflict(entries, done)) {
+                // 存在异常情况
                 entries.clear();
                 Utils.runClosureInThread(done, new Status(RaftError.EINTERNAL, "Fail to checkAndResolveConflict."));
                 return;
@@ -313,9 +315,11 @@ public class LogManagerImpl implements LogManager {
             for (int i = 0; i < entries.size(); i++) {
                 final LogEntry entry = entries.get(i);
                 // Set checksum after checkAndResolveConflict
+                // 设置校验码
                 if (this.raftOptions.isEnableLogEntryChecksum()) {
                     entry.setChecksum(entry.checksum());
                 }
+                // 处理配置类型的entry
                 if (entry.getType() == EntryType.ENTRY_TYPE_CONFIGURATION) {
                     Configuration oldConf = new Configuration();
                     if (entry.getOldPeers() != null) {
@@ -331,6 +335,7 @@ public class LogManagerImpl implements LogManager {
                 done.setFirstLogIndex(entries.get(0).getId().getIndex());
                 this.logsInMemory.addAll(entries);
             }
+            // 设置到回调接口
             done.setEntries(entries);
 
             int retryTimes = 0;
@@ -340,7 +345,7 @@ public class LogManagerImpl implements LogManager {
                 event.done = done;
             };
             while (true) {
-                // 向本地队列添加event
+                // 向本地队列添加event,由队列处理器批量添加到磁盘
                 if (tryOfferEvent(done, translator)) {
                     break;
                 } else {
@@ -422,6 +427,7 @@ public class LogManagerImpl implements LogManager {
         return true;
     }
 
+    // 将entries持久化到磁盘
     private LogId appendToStorage(final List<LogEntry> toAppend) {
         LogId lastId = null;
         if (!this.hasError) {
@@ -429,13 +435,16 @@ public class LogManagerImpl implements LogManager {
             final int entriesCount = toAppend.size();
             this.nodeMetrics.recordSize("append-logs-count", entriesCount);
             try {
+                // 累加写入字节数
                 int writtenSize = 0;
                 for (int i = 0; i < entriesCount; i++) {
                     final LogEntry entry = toAppend.get(i);
                     writtenSize += entry.getData() != null ? entry.getData().remaining() : 0;
                 }
                 this.nodeMetrics.recordSize("append-logs-bytes", writtenSize);
+                // 批量写入磁盘
                 final int nAppent = this.logStorage.appendEntries(toAppend);
+                // 写入异常
                 if (nAppent != entriesCount) {
                     LOG.error("**Critical error**, fail to appendEntries, nAppent={}, toAppend={}", nAppent,
                         toAppend.size());
@@ -452,6 +461,7 @@ public class LogManagerImpl implements LogManager {
         return lastId;
     }
 
+    // 用于将entries批量添加到磁盘
     private class AppendBatcher {
         List<StableClosure> storage;
         int                 cap;
@@ -488,10 +498,13 @@ public class LogManagerImpl implements LogManager {
             return this.lastId;
         }
 
+        // 将回调和entries添加到缓冲区，如果必要的话进行flush操作
         void append(final StableClosure done) {
+            // 到达容量限制或者超过配置的缓存大小，进行一次flush操作
             if (this.size == this.cap || this.bufferSize >= LogManagerImpl.this.raftOptions.getMaxAppendBufferSize()) {
                 flush();
             }
+            // 添加到缓冲区
             this.storage.add(done);
             this.size++;
             this.toAppend.addAll(done.getEntries());
@@ -501,6 +514,7 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    // append entries
     private class StableClosureEventHandler implements EventHandler<StableClosureEvent> {
         LogId               lastId  = LogManagerImpl.this.diskId;
         List<StableClosure> storage = new ArrayList<>(256);
@@ -519,15 +533,19 @@ public class LogManagerImpl implements LogManager {
             final StableClosure done = event.done;
 
             if (done.getEntries() != null && !done.getEntries().isEmpty()) {
+                // 添加到本地磁盘(批处理)
                 this.ab.append(done);
             } else {
+                // 先进行一次刷盘操作
                 this.lastId = this.ab.flush();
                 boolean ret = true;
                 switch (event.type) {
                     case LAST_LOG_ID:
+                        // 返回logId
                         ((LastLogIdClosure) done).setLastLogId(this.lastId.copy());
                         break;
                     case TRUNCATE_PREFIX:
+                        // 日志截断
                         long startMs = Utils.monotonicMs();
                         try {
                             final TruncatePrefixClosure tpc = (TruncatePrefixClosure) done;
@@ -539,6 +557,7 @@ public class LogManagerImpl implements LogManager {
                         }
                         break;
                     case TRUNCATE_SUFFIX:
+                        // 日志截断
                         startMs = Utils.monotonicMs();
                         try {
                             final TruncateSuffixClosure tsc = (TruncateSuffixClosure) done;
@@ -555,6 +574,7 @@ public class LogManagerImpl implements LogManager {
                         }
                         break;
                     case RESET:
+                        // 将日志重置
                         final ResetClosure rc = (ResetClosure) done;
                         LOG.info("Reseting storage to nextLogIndex={}", rc.nextLogIndex);
                         ret = LogManagerImpl.this.logStorage.reset(rc.nextLogIndex);
@@ -1011,6 +1031,7 @@ public class LogManagerImpl implements LogManager {
         offerEvent(c, EventType.TRUNCATE_SUFFIX);
     }
 
+    // 检查并处理entries和本地log的冲突
     @SuppressWarnings("NonAtomicOperationOnVolatileField")
     private boolean checkAndResolveConflict(final List<LogEntry> entries, final StableClosure done) {
         final LogEntry firstLogEntry = ArrayDeque.peekFirst(entries);
@@ -1018,6 +1039,7 @@ public class LogManagerImpl implements LogManager {
             // Node is currently the leader and |entries| are from the user who
             // don't know the correct indexes the logs should assign to. So we have
             // to assign indexes to the appending entries
+            // 为entries分配index
             for (int i = 0; i < entries.size(); i++) {
                 entries.get(i).getId().setIndex(++this.lastLogIndex);
             }
@@ -1026,7 +1048,9 @@ public class LogManagerImpl implements LogManager {
             // Node is currently a follower and |entries| are from the leader. We
             // should check and resolve the conflicts between the local logs and
             // |entries|
+            // 当前节点是follower，entries来自leader。我们需要检查并解决本地log和entries之间的冲突
             if (firstLogEntry.getId().getIndex() > this.lastLogIndex + 1) {
+                // entries和本地log的index存在间隙，异常情况
                 Utils.runClosureInThread(done, new Status(RaftError.EINVAL,
                     "There's gap between first_index=%d and last_log_index=%d", firstLogEntry.getId().getIndex(),
                     this.lastLogIndex));
@@ -1034,6 +1058,7 @@ public class LogManagerImpl implements LogManager {
             }
             final long appliedIndex = this.appliedId.getIndex();
             final LogEntry lastLogEntry = ArrayDeque.peekLast(entries);
+            // 小于appliedId.index，失败
             if (lastLogEntry.getId().getIndex() <= appliedIndex) {
                 LOG.warn(
                     "Received entries of which the lastLog={} is not greater than appliedIndex={}, return immediately with nothing changed.",
@@ -1041,16 +1066,19 @@ public class LogManagerImpl implements LogManager {
                 return false;
             }
             if (firstLogEntry.getId().getIndex() == this.lastLogIndex + 1) {
+                // 第一个entry是在lastLogIndex之后，没有冲突
                 // fast path
                 this.lastLogIndex = lastLogEntry.getId().getIndex();
             } else {
                 // Appending entries overlap the local ones. We should find if there
                 // is a conflicting index from which we should truncate the local
                 // ones.
+                // 解决冲突的entry
                 int conflictingIndex = 0;
                 for (; conflictingIndex < entries.size(); conflictingIndex++) {
+                    // 超出term不匹配的entry
                     if (unsafeGetTerm(entries.get(conflictingIndex).getId().getIndex()) != entries
-                        .get(conflictingIndex).getId().getTerm()) {
+                            .get(conflictingIndex).getId().getTerm()) {
                         break;
                     }
                 }
@@ -1058,11 +1086,13 @@ public class LogManagerImpl implements LogManager {
                     if (entries.get(conflictingIndex).getId().getIndex() <= this.lastLogIndex) {
                         // Truncate all the conflicting entries to make local logs
                         // consensus with the leader.
+                        // 截断所有冲突的entries，使本地和leader保持一致
                         unsafeTruncateSuffix(entries.get(conflictingIndex).getId().getIndex() - 1);
                     }
                     this.lastLogIndex = lastLogEntry.getId().getIndex();
                 } // else this is a duplicated AppendEntriesRequest, we have
                   // nothing to do besides releasing all the entries
+                // 清除前段index重复的entry
                 if (conflictingIndex > 0) {
                     // Remove duplication
                     entries.subList(0, conflictingIndex).clear();

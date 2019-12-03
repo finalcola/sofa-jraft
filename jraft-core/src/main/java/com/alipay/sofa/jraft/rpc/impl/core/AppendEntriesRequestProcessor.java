@@ -55,6 +55,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
 
     /**
      * Peer executor selector.
+     * 用于选择executor
      * @author dennis
      */
     final class PeerExecutorSelector implements ExecutorSelector {
@@ -71,19 +72,22 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
 
             final PeerId peer = new PeerId();
 
+            // 解析peerId，失败则返回公共的executor
             if (!peer.parse(peerId)) {
                 return getExecutor();
             }
 
             final Node node = NodeManager.getInstance().get(groupId, peer);
-
+            // 检查replicatorPipeline配置，未开启则返回公共的executor
             if (node == null || !node.getRaftOptions().isReplicatorPipeline()) {
                 return getExecutor();
             }
 
             // The node enable pipeline, we should ensure bolt support it.
+            // 确定RPC框架支持pipeline
             Utils.ensureBoltPipeline();
 
+            // 获取或新建peer对应的PeerRequestContext（内部会保存上下文信息并创建响应队列和单独的线程池）
             final PeerRequestContext ctx = getPeerRequestContext(groupId, peerId, null);
 
             return ctx.executor;
@@ -157,9 +161,11 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
         assert (respQueue != null);
 
         synchronized (Utils.withLockObject(respQueue)) {
+            // 添加到响应队列
             respQueue.add(new SequenceMessage(asyncContext, msg, seq));
 
             if (!ctx.hasTooManyPendingResponses()) {
+                // 处理响应
                 while (!respQueue.isEmpty()) {
                     final SequenceMessage queuedPipelinedResponse = respQueue.peek();
 
@@ -168,6 +174,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
                         break;
                     }
                     respQueue.remove();
+                    // 发送响应并递增序列号
                     try {
                         queuedPipelinedResponse.sendResponse();
                     } finally {
@@ -175,6 +182,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
                     }
                 }
             } else {
+                // 堆积的响应超过阈值，关闭连接并清空context
                 LOG.warn("Closed connection to peer {}/{}, because of too many pending responses, queued={}, max={}",
                     ctx.groupId, peerId, respQueue.size(), ctx.maxPendingResponses);
                 connection.close();
@@ -189,21 +197,23 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
         private final String                         groupId;
         private final String                         peerId;
 
-        // Executor to run the requests
+        // Executor to run the requests. 内部由单线程和Mpsc队列实现
         private SingleThreadExecutor                 executor;
         // The request sequence;
         private int                                  sequence;
         // The required sequence to be sent.
         private int                                  nextRequiredSequence;
         // The response queue,it's not thread-safe and protected by it self object monitor.
+        // 响应队列
         private final PriorityQueue<SequenceMessage> responseQueue;
-
+        // 积压响应报文数量的阈值
         private final int                            maxPendingResponses;
 
         public PeerRequestContext(final String groupId, final String peerId, final int maxPendingResponses) {
             super();
             this.peerId = peerId;
             this.groupId = groupId;
+            // 内部由单线程和Mpsc队列实现
             this.executor = new MpscSingleThreadExecutor(Utils.MAX_APPEND_ENTRIES_TASKS_PER_THREAD,
                 JRaftUtils.createThreadFactory(groupId + "/" + peerId + "-AppendEntriesThread"));
 
@@ -259,6 +269,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
             }
         }
 
+        // 获取或新建PeerRequestContext
         PeerRequestContext peerCtx = groupContexts.get(peerId);
         if (peerCtx == null) {
             synchronized (Utils.withLockObject(groupContexts)) {
@@ -345,13 +356,14 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
         if (node.getRaftOptions().isReplicatorPipeline()) {
             final String groupId = request.getGroupId();
             final String peerId = request.getPeerId();
-
+            // 分配序列号
             final int reqSequence = getAndIncrementSequence(groupId, peerId, done.getBizContext().getConnection());
+            // 处理请求(会比较序列号)
             final Message response = service.handleAppendEntriesRequest(request, new SequenceRpcRequestClosure(done,
                 reqSequence, groupId, peerId));
             if (response != null) {
                 sendSequenceResponse(groupId, peerId, reqSequence, done.getAsyncContext(), done.getBizContext(),
-                    response);
+                        response);
             }
             return null;
         } else {
@@ -378,6 +390,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
         }
     }
 
+    // 当连接断开后，清除peer对应的PeerRequestContext
     @Override
     public void onEvent(final String remoteAddr, final Connection conn) {
         final PeerId peer = new PeerId();
@@ -385,6 +398,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
 
         if (!StringUtils.isBlank(peerAttr) && peer.parse(peerAttr)) {
             // Clear request context when connection disconnected.
+            // 清除peer对应的PeerRequestContext
             for (final Map.Entry<String, ConcurrentMap<String, PeerRequestContext>> entry : this.peerRequestContexts
                 .entrySet()) {
                 final ConcurrentMap<String, PeerRequestContext> groupCtxs = entry.getValue();
