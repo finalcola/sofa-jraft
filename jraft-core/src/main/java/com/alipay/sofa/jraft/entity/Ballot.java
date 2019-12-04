@@ -55,7 +55,7 @@ public class Ballot {
 
     /**
      * Init the ballot with current conf and old conf.
-     *
+     * 根据当前配置和旧配置初始化选举投票箱（peers信息和所需的票数）
      * @param conf    current configuration
      * @param oldConf old configuration
      * @return true if init success

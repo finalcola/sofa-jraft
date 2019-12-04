@@ -513,6 +513,7 @@ public class NodeImpl implements Node, RaftServerService {
         if (groupId != null) {
             Utils.verifyGroupId(groupId);
         }
+        // 初始化group、serverId、term等信息
         this.groupId = groupId;
         this.serverId = serverId != null ? serverId.copy() : null;
         this.state = State.STATE_UNINITIALIZED;
@@ -587,6 +588,7 @@ public class NodeImpl implements Node, RaftServerService {
         Utils.runInThread(() -> doSnapshot(null));
     }
 
+    // 处理选举任务到期（与leader连接断开，开始竞选leader）
     private void handleElectionTimeout() {
         boolean doUnlock = true;
         this.writeLock.lock();
@@ -594,12 +596,15 @@ public class NodeImpl implements Node, RaftServerService {
             if (this.state != State.STATE_FOLLOWER) {
                 return;
             }
+            // 检查与leader心跳间隔是否超过阈值
             if (isCurrentLeaderValid()) {
                 return;
             }
+            // 重置leaderId并通知状态机
             resetLeaderId(PeerId.emptyPeer(), new Status(RaftError.ERAFTTIMEDOUT, "Lost connection from leader %s.",
                 this.leaderId));
             doUnlock = false;
+            // 开启预选举
             preVote();
         } finally {
             if (doUnlock) {
@@ -775,7 +780,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         // Init timers
         final String suffix = getNodeId().toString();
-        // 投票定时任务
+        // 投票定时任务(用于重试)
         this.voteTimer = new RepeatedTimer("JRaft-VoteTimer-" + suffix, this.options.getElectionTimeoutMs()) {
 
             @Override
@@ -965,6 +970,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     // should be in writeLock
+    // 尝试竞选leader，先切换为candidate，term++，发生竞选请求
     private void electSelf() {
         long oldTerm;
         // 切换为Candidate，term+1，开始投票任务
@@ -974,23 +980,31 @@ public class NodeImpl implements Node, RaftServerService {
                 LOG.warn("Node {} can't do electSelf as it is not in {}.", getNodeId(), this.conf);
                 return;
             }
+            // 停止选举任务
             if (this.state == State.STATE_FOLLOWER) {
                 LOG.debug("Node {} stop election timer, term={}.", getNodeId(), this.currTerm);
                 this.electionTimer.stop();
             }
+            // 重置leaderId并通知状态机
             resetLeaderId(PeerId.emptyPeer(), new Status(RaftError.ERAFTTIMEDOUT,
                 "A follower's leader_id is reset to NULL as it begins to request_vote."));
+            // 切换为CANDIDATE
             this.state = State.STATE_CANDIDATE;
+            // 版本号+1（预选举时不会）
             this.currTerm++;
+            // 给自己投票
             this.votedId = this.serverId.copy();
             LOG.debug("Node {} start vote timer, term={} .", getNodeId(), this.currTerm);
+            // 开启投票超时重试任务
             this.voteTimer.start();
+            // 根据当前配置和旧配置初始化选举投票箱（peers信息和所需的票数）
             this.voteCtx.init(this.conf.getConf(), this.conf.isStable() ? null : this.conf.getOldConf());
             oldTerm = this.currTerm;
         } finally {
             this.writeLock.unlock();
         }
 
+        // 获取lastLogId
         final LogId lastLogId = this.logManager.getLastLogId(true);
 
         this.writeLock.lock();
@@ -1072,16 +1086,22 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    // 切换为leader
     private void becomeLeader() {
         Requires.requireTrue(this.state == State.STATE_CANDIDATE, "Illegal state: " + this.state);
         LOG.info("Node {} become leader of group, term={}, conf={}, oldConf={}.", getNodeId(), this.currTerm,
             this.conf.getConf(), this.conf.getOldConf());
         // cancel candidate vote timer
+        // 取消投票超时重试任务
         stopVoteTimer();
+        // 状态切换为leader
         this.state = State.STATE_LEADER;
+        // leaderId更新为当前节点
         this.leaderId = this.serverId.copy();
+        // 更新复制组的term
         this.replicatorGroup.resetTerm(this.currTerm);
         // Start follower's replicators
+        // 开始follower的心跳和复制任务
         for (final PeerId peer : this.conf.listPeers()) {
             if (peer.equals(this.serverId)) {
                 continue;
@@ -1093,6 +1113,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
 
         // Start learner's replicators
+        // 开启learner的复制任务
         for (final PeerId peer : this.conf.listLearners()) {
             LOG.debug("Node {} add a leaarner replicator, term={}, peer={}.", getNodeId(), this.currTerm, peer);
             if (!this.replicatorGroup.addReplicator(peer, ReplicatorType.Learner)) {
@@ -2404,16 +2425,19 @@ public class NodeImpl implements Node, RaftServerService {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
+            // 预选举需要在follower状态下进行
             if (this.state != State.STATE_FOLLOWER) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, state not in STATE_FOLLOWER but {}.",
                     getNodeId(), peerId, this.state);
                 return;
             }
+            // term在请求期间发生了更新
             if (term != this.currTerm) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, term={}, currTerm={}.", getNodeId(),
                     peerId, term, this.currTerm);
                 return;
             }
+            // 响应返回更高的term，stepdown
             if (response.getTerm() > this.currTerm) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, term {}, expect={}.", getNodeId(), peerId,
                     response.getTerm(), this.currTerm);
@@ -2425,7 +2449,9 @@ public class NodeImpl implements Node, RaftServerService {
                 response.getTerm(), response.getGranted());
             // check granted quorum?
             if (response.getGranted()) {
+                // 获得一票，检查投票箱
                 this.prevVoteCtx.grant(peerId);
+                // 如果已经获得足够的票数，则尝试进行选举
                 if (this.prevVoteCtx.isGranted()) {
                     doUnlock = false;
                     electSelf();
@@ -2464,10 +2490,12 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     // in writeLock
+    // 预选举
     private void preVote() {
         long oldTerm;
         try {
             LOG.info("Node {} term {} start preVote.", getNodeId(), this.currTerm);
+            // 正在下载快照，不进行预选举
             if (this.snapshotExecutor != null && this.snapshotExecutor.isInstallingSnapshot()) {
                 LOG.warn(
                     "Node {} term {} doesn't do preVote when installing snapshot as the configuration may be out of date.",
@@ -2478,30 +2506,37 @@ public class NodeImpl implements Node, RaftServerService {
                 LOG.warn("Node {} can't do preVote as it is not in conf <{}>.", getNodeId(), this.conf);
                 return;
             }
+            // 记录当前的term
             oldTerm = this.currTerm;
         } finally {
             this.writeLock.unlock();
         }
 
+        // 获取lastLogId
         final LogId lastLogId = this.logManager.getLastLogId(true);
 
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
             // pre_vote need defense ABA after unlock&writeLock
+            // 检查term是否在获取logId过程中被提升
             if (oldTerm != this.currTerm) {
                 LOG.warn("Node {} raise term {} when get lastLogId.", getNodeId(), this.currTerm);
                 return;
             }
+            // 根据当前配置和旧配置初始化预选举投票箱（peers信息和所需的票数）
             this.prevVoteCtx.init(this.conf.getConf(), this.conf.isStable() ? null : this.conf.getOldConf());
+            // 发送预选举请求
             for (final PeerId peer : this.conf.listPeers()) {
                 if (peer.equals(this.serverId)) {
                     continue;
                 }
+                // 跳过无法连接的节点
                 if (!this.rpcService.connect(peer.getEndpoint())) {
                     LOG.warn("Node {} channel init failed, address={}.", getNodeId(), peer.getEndpoint());
                     continue;
                 }
+                // 预选举响应处理（收集选票，竞选leader或者stemdown）
                 final OnPreVoteRpcDone done = new OnPreVoteRpcDone(peer, this.currTerm);
                 done.request = RequestVoteRequest.newBuilder() //
                     .setPreVote(true) // it's a pre-vote request.
@@ -2514,9 +2549,12 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
                 this.rpcService.preVote(peer.getEndpoint(), done.request, done);
             }
+            // 给自己投票
             this.prevVoteCtx.grant(this.serverId);
+            // 检查投票箱
             if (this.prevVoteCtx.isGranted()) {
                 doUnlock = false;
+                // 尝试竞选leader，先切换为candidate，term++，发生竞选请求
                 electSelf();
             }
         } finally {

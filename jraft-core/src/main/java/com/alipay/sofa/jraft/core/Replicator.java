@@ -837,7 +837,7 @@ public class Replicator implements ThreadId.OnError {
         }
 
         // Start replication
-        // 开启复制任务
+        // 创建threadId封装Replicator
         r.id = new ThreadId(r/*data*/, r/*OnError*/);
         // 获取threadId的锁
         r.id.lock();
@@ -1300,6 +1300,7 @@ public class Replicator implements ThreadId.OnError {
             }
             if (continueSendEntries) {
                 // unlock in sendEntries.
+                // 继续发送SendEntries请求
                 r.sendEntries();
             }
         }
@@ -1520,6 +1521,7 @@ public class Replicator implements ThreadId.OnError {
             while (true) {
                 final long nextSendingIndex = getNextSendIndex();
                 if (nextSendingIndex > prevSendIndex) {
+                    // 发送SendEntries请求
                     if (sendEntries(nextSendingIndex)) {
                         prevSendIndex = nextSendingIndex;
                     } else {
@@ -1532,6 +1534,7 @@ public class Replicator implements ThreadId.OnError {
                 }
             }
         } finally {
+            // 解锁
             if (doUnlock) {
                 this.id.unlock();
             }

@@ -481,7 +481,9 @@ public class LogManagerImpl implements LogManager {
 
         LogId flush() {
             if (this.size > 0) {
+                // 执行一次flush操作,返回lastLogId
                 this.lastId = appendToStorage(this.toAppend);
+                // 通知AppendEntries的回调
                 for (int i = 0; i < this.size; i++) {
                     this.storage.get(i).getEntries().clear();
                     if (LogManagerImpl.this.hasError) {
@@ -900,12 +902,14 @@ public class LogManagerImpl implements LogManager {
                 if (this.lastLogIndex == this.lastSnapshotId.getIndex()) {
                     return this.lastSnapshotId;
                 }
+                // 已异步方式查询lastLogId
                 c = new LastLogIdClosure();
                 offerEvent(c, EventType.LAST_LOG_ID);
             }
         } finally {
             this.readLock.unlock();
         }
+        // 等待查询完成并返回
         try {
             c.await();
         } catch (final InterruptedException e) {
