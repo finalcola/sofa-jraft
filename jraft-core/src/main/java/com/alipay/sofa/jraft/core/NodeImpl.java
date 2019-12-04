@@ -449,6 +449,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         /**
          * Invoked when this node becomes the leader, write a configuration change log as the first log.
+         * 根据配置更新当前的节点列表，并写入一条配置更新日志
          */
         void flush(final Configuration conf, final Configuration oldConf) {
             Requires.requireTrue(!isBusy(), "Flush when busy");
@@ -1128,7 +1129,9 @@ public class NodeImpl implements Node, RaftServerService {
         if (this.confCtx.isBusy()) {
             throw new IllegalStateException();
         }
+        // 根据配置更新当前的节点列表，并写入一条配置更新日志
         this.confCtx.flush(this.conf.getConf(), this.conf.getOldConf());
+        // 开启降级任务
         this.stepDownTimer.start();
     }
 
@@ -2174,6 +2177,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    // 写入一条配置更新日志
     private void unsafeApplyConfiguration(final Configuration newConf, final Configuration oldConf,
                                           final boolean leaderStart) {
         Requires.requireTrue(this.confCtx.isBusy(), "ConfigurationContext is not busy");
@@ -2191,6 +2195,7 @@ public class NodeImpl implements Node, RaftServerService {
             Utils.runClosureInThread(configurationChangeDone, new Status(RaftError.EINTERNAL, "Fail to append task."));
             return;
         }
+        // 写入日志
         final List<LogEntry> entries = new ArrayList<>();
         entries.add(entry);
         this.logManager.appendEntries(entries, new LeaderStableClosure(entries));
