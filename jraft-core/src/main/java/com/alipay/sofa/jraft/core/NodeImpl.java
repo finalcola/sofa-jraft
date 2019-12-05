@@ -1821,8 +1821,9 @@ public class NodeImpl implements Node, RaftServerService {
             final long prevLogIndex = request.getPrevLogIndex();
             final long prevLogTerm = request.getPrevLogTerm();
             final long localPrevLogTerm = this.logManager.getTerm(prevLogIndex);
-            // 校验logTerm
+            // 校验日志一致性
             if (localPrevLogTerm != prevLogTerm) {
+                // 统一index的日志term不匹配，拒绝该请求
                 final long lastLogIndex = this.logManager.getLastLogIndex();
 
                 LOG.warn(
@@ -1837,7 +1838,7 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
             }
 
-            // 心跳请求，返回当前的term和lastLogIndex
+            // 心跳请求，返回当前的term和lastLogIndex，更新commitIndex
             if (entriesCount == 0) {
                 // heartbeat
                 final AppendEntriesResponse.Builder respBuilder = AppendEntriesResponse.newBuilder() //
@@ -1847,12 +1848,13 @@ public class NodeImpl implements Node, RaftServerService {
                 doUnlock = false;
                 this.writeLock.unlock();
                 // see the comments at FollowerStableClosure#run()
+                // 更新commitIndex，并通知状态机
                 this.ballotBox.setLastCommittedIndex(Math.min(request.getCommittedIndex(), prevLogIndex));
                 return respBuilder.build();
             }
 
             // Parse request
-            // 解析请求
+            // 解析请求(Entries)
             long index = prevLogIndex;
             final List<LogEntry> entries = new ArrayList<>(entriesCount);
             ByteBuffer allData = null;

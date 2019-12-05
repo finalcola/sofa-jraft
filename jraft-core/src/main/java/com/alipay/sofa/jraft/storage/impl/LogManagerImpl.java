@@ -305,7 +305,7 @@ public class LogManagerImpl implements LogManager {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
-            // 检查并处理entries和本地log的冲突
+            // 检查并处理entries和本地log的冲突（日志截断）
             if (!entries.isEmpty() && !checkAndResolveConflict(entries, done)) {
                 // 存在异常情况
                 entries.clear();
@@ -1080,12 +1080,13 @@ public class LogManagerImpl implements LogManager {
                 // 解决冲突的entry
                 int conflictingIndex = 0;
                 for (; conflictingIndex < entries.size(); conflictingIndex++) {
-                    // 超出term不匹配的entry
+                    // 找出term不匹配的entry
                     if (unsafeGetTerm(entries.get(conflictingIndex).getId().getIndex()) != entries
                             .get(conflictingIndex).getId().getTerm()) {
                         break;
                     }
                 }
+                // 为了保持一致性，找到 follower 最后一条和 leader 匹配的日志，然后把那条日志后面的日志全部删除
                 if (conflictingIndex != entries.size()) {
                     if (entries.get(conflictingIndex).getId().getIndex() <= this.lastLogIndex) {
                         // Truncate all the conflicting entries to make local logs

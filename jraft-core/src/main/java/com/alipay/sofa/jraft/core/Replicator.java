@@ -1354,7 +1354,7 @@ public class Replicator implements ThreadId.OnError {
                 append(" prevLogTerm=").append(request.getPrevLogTerm()). //
                 append(" count=").append(request.getEntriesCount());
         }
-        // 出现异常（由于follower宕机），将该follower的复制阻塞，直到follower重新加入集群或者删除
+        // 出现异常（由于follower宕机），将该follower的复制阻塞一段时间
         if (!status.isOk()) {
             // If the follower crashes, any RPC to the follower fails immediately,
             // so we need to block the follower for a while instead of looping until
@@ -1445,7 +1445,7 @@ public class Replicator implements ThreadId.OnError {
         }
         final int entriesSize = request.getEntriesCount();
         if (entriesSize > 0) {
-            // 更新follower的commitIndex
+            // leader收到AppendEntries响应后，尝试提交[first_log_index, last_log_index]之间的日志
             if (r.options.getReplicatorType().isFollower()) {
                 // Only commit index when the response is from follower.
                 r.options.getBallotBox().commitAt(r.nextIndex, r.nextIndex + entriesSize - 1, r.options.getPeerId());

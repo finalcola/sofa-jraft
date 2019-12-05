@@ -51,7 +51,9 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     private ClosureQueue             closureQueue;
     private final StampedLock        stampedLock        = new StampedLock();
     private long                     lastCommittedIndex = 0;
+    // 记录未提交日志的起始索引
     private long                     pendingIndex;
+    // 记录pendingIndex之后每个index对应日志的提交情况（如果提交给了一半以上的follower，则将该日志commit）
     private final ArrayDeque<Ballot> pendingMetaQueue   = new ArrayDeque<>();
 
     @OnlyForTest
@@ -92,6 +94,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     /**
      * Called by leader, otherwise the behavior is undefined
      * Set logs in [first_log_index, last_log_index] are stable at |peer|.
+     * leader收到AppendEntries响应后，尝试提交[first_log_index, last_log_index]之间的日志
      */
     public boolean commitAt(final long firstLogIndex, final long lastLogIndex, final PeerId peer) {
         // TODO  use lock-free algorithm here?
@@ -101,19 +104,22 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             if (this.pendingIndex == 0) {
                 return false;
             }
+            // [first_log_index, last_log_index]之间的日志都已经提交
             if (lastLogIndex < this.pendingIndex) {
                 return true;
             }
-
+            // 越界（last_log_index超过当前的pending logs）
             if (lastLogIndex >= this.pendingIndex + this.pendingMetaQueue.size()) {
                 throw new ArrayIndexOutOfBoundsException();
             }
 
+            // 计算pendingIndex后每个index log的提交数量，大于一半则提交该处的log
             final long startAt = Math.max(this.pendingIndex, firstLogIndex);
             Ballot.PosHint hint = new Ballot.PosHint();
             for (long logIndex = startAt; logIndex <= lastLogIndex; logIndex++) {
                 final Ballot bl = this.pendingMetaQueue.get((int) (logIndex - this.pendingIndex));
                 hint = bl.grant(peer, hint);
+                // 该位置的日志已经append到一半以上的follower
                 if (bl.isGranted()) {
                     lastCommittedIndex = logIndex;
                 }
@@ -127,6 +133,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             // logs, since we use the new configuration to deal the quorum of the
             // removal request, we think it's safe to commit all the uncommitted
             // previous logs, which is not well proved right now
+            // 删除已commitIndex之前的pendingMetaQueue，并更新commitIndex、pendingIndex
             this.pendingMetaQueue.removeRange(0, (int) (lastCommittedIndex - this.pendingIndex) + 1);
             LOG.debug("Committed log fromIndex={}, toIndex={}.", this.pendingIndex, lastCommittedIndex);
             this.pendingIndex = lastCommittedIndex + 1;
@@ -134,6 +141,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         } finally {
             this.stampedLock.unlockWrite(stamp);
         }
+        // 通知状态机
         this.waiter.onCommitted(lastCommittedIndex);
         return true;
     }
@@ -224,6 +232,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         boolean doUnlock = true;
         final long stamp = this.stampedLock.writeLock();
         try {
+            // 校验commitIndex
             if (this.pendingIndex != 0 || !this.pendingMetaQueue.isEmpty()) {
                 Requires.requireTrue(lastCommittedIndex < this.pendingIndex,
                     "Node changes to leader, pendingIndex=%d, param lastCommittedIndex=%d", this.pendingIndex,
@@ -233,6 +242,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             if (lastCommittedIndex < this.lastCommittedIndex) {
                 return false;
             }
+            // 更新commitIndex,并通知状态机
             if (lastCommittedIndex > this.lastCommittedIndex) {
                 this.lastCommittedIndex = lastCommittedIndex;
                 this.stampedLock.unlockWrite(stamp);
