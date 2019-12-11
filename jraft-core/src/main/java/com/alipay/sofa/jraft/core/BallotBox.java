@@ -48,6 +48,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     private static final Logger      LOG                = LoggerFactory.getLogger(BallotBox.class);
 
     private FSMCaller                waiter;
+    // 保存添加log时的回调，再日志提交后由状态机调用
     private ClosureQueue             closureQueue;
     private final StampedLock        stampedLock        = new StampedLock();
     private long                     lastCommittedIndex = 0;
@@ -185,6 +186,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                     this.lastCommittedIndex);
                 return false;
             }
+            // 设置pendingIndex为本地最新append日志的index+1
             this.pendingIndex = newPendingIndex;
             this.closureQueue.resetFirstIndex(newPendingIndex);
             return true;
@@ -214,6 +216,8 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                 LOG.error("Fail to appendingTask, pendingIndex={}.", this.pendingIndex);
                 return false;
             }
+            // 为新增的日志添加一个投票箱，
+            // 当票数大于一半时(被一半以上的节点复制)，commit该日志
             this.pendingMetaQueue.add(bl);
             this.closureQueue.appendPendingClosure(done);
             return true;

@@ -117,6 +117,7 @@ public class CounterServiceImpl implements CounterService {
         }
     }
 
+    // 失败回调--当前节点非leader
     private void handlerNotLeaderError(final CounterClosure closure) {
         closure.failure("Not leader.", getRedirect());
         closure.run(new Status(RaftError.EPERM, "Not leader"));

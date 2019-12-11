@@ -63,7 +63,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * Read-only service implementation.
- *
+ * 用于日志读取
  * @author dennis
  */
 public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndexListener {
@@ -118,6 +118,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                 return;
             }
 
+            // 批量处理
             this.events.add(newEvent);
             if (this.events.size() >= ReadOnlyServiceImpl.this.raftOptions.getApplyBatch() || endOfBatch) {
                 executeReadIndexEvents(this.events);
@@ -167,6 +168,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
             boolean doUnlock = true;
             ReadOnlyServiceImpl.this.lock.lock();
             try {
+                // 已提交
                 if (readIndexStatus.isApplied(ReadOnlyServiceImpl.this.fsmCaller.getLastAppliedIndex())) {
                     // Already applied, notify readIndex request.
                     ReadOnlyServiceImpl.this.lock.unlock();
@@ -198,10 +200,12 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         }
     }
 
+    // 执行读取
     private void executeReadIndexEvents(final List<ReadIndexEvent> events) {
         if (events.isEmpty()) {
             return;
         }
+        // 构建请求
         final ReadIndexRequest.Builder rb = ReadIndexRequest.newBuilder() //
             .setGroupId(this.node.getGroupId()) //
             .setServerId(this.node.getServerId().toString());
@@ -242,9 +246,11 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                 .register("jraft-read-only-service-disruptor", new DisruptorMetricSet(this.readIndexQueue));
         }
         // listen on lastAppliedLogIndex change events.
+        // 作为监听器，注册到fsmCaller
         this.fsmCaller.addLastAppliedLogIndexListener(this);
 
         // start scanner
+        // 启动扫描任务（通知readIndex的回调）
         this.scheduledExecutorService.scheduleAtFixedRate(
             () -> onApplied(this.fsmCaller.getLastAppliedIndex()),
             this.raftOptions.getMaxElectionDelayMs(),
@@ -321,6 +327,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                 return;
             }
             // Find all statuses that log index less than or equal to appliedIndex.
+            // 获取所有logIndex小于appliedIndex的statuses
             final Map<Long, List<ReadIndexStatus>> statuses = this.pendingNotifyStatus.headMap(appliedIndex, true);
             if (statuses != null) {
                 pendingStatuses = new ArrayList<>(statuses.size() << 1);
@@ -336,6 +343,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
             }
         } finally {
             this.lock.unlock();
+            // 通知读取index的回调
             if (pendingStatuses != null && !pendingStatuses.isEmpty()) {
                 for (final ReadIndexStatus status : pendingStatuses) {
                     notifySuccess(status);
@@ -359,6 +367,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         return this.pendingNotifyStatus;
     }
 
+    // 通知读取index的回调
     private void notifySuccess(final ReadIndexStatus status) {
         final long nowMs = Utils.monotonicMs();
         final List<ReadIndexState> states = status.getStates();

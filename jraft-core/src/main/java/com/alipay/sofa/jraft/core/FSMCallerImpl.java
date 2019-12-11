@@ -475,9 +475,11 @@ public class FSMCallerImpl implements FSMCaller {
         try {
             final List<Closure> closures = new ArrayList<>();
             final List<TaskClosure> taskClosures = new ArrayList<>();
+            // 取出添加log时的回调
             final long firstClosureIndex = this.closureQueue.popClosureUntil(committedIndex, closures, taskClosures);
 
             // Calls TaskClosure#onCommitted if necessary
+            // 调用回调
             onTaskCommitted(taskClosures);
 
             Requires.requireTrue(firstClosureIndex >= 0, "Invalid firstClosureIndex");
@@ -510,6 +512,7 @@ public class FSMCallerImpl implements FSMCaller {
                 setError(iterImpl.getError());
                 iterImpl.runTheRestClosureWithError();
             }
+            // 更新index、termId、appliedId
             final long lastIndex = iterImpl.getIndex() - 1;
             final long lastTerm = this.logManager.getTerm(lastIndex);
             final LogId lastAppliedId = new LogId(lastIndex, lastTerm);

@@ -923,6 +923,7 @@ public class NodeImpl implements Node, RaftServerService {
         // 初始化replicatorGroup
         this.replicatorGroup.init(new NodeId(this.groupId, this.serverId), rgOpts);
 
+        // 创建并初始化只读服务
         this.readOnlyService = new ReadOnlyServiceImpl();
         final ReadOnlyServiceOptions rosOpts = new ReadOnlyServiceOptions();
         rosOpts.setFsmCaller(this.fsmCaller);
@@ -1123,6 +1124,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
 
         // init commit manager
+        // 初始化commit管理组件(pendingIndex设置为lastLogIndex+1)
         this.ballotBox.resetPendingIndex(this.logManager.getLastLogIndex() + 1);
         // Register _conf_ctx to reject configuration changing before the first log
         // is committed.
@@ -1240,7 +1242,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
-    // 处理任务
+    // 批量处理任务
     private void executeApplyingTasks(final List<LogEntryAndClosure> tasks) {
         this.writeLock.lock();
         try {
@@ -1275,6 +1277,7 @@ public class NodeImpl implements Node, RaftServerService {
                     }
                     continue;
                 }
+                // 记录未提交的日志，并更新pending信息
                 if (!this.ballotBox.appendPendingTask(this.conf.getConf(),
                     this.conf.isStable() ? null : this.conf.getOldConf(), task.done)) {
                     Utils.runClosureInThread(task.done, new Status(RaftError.EINTERNAL, "Fail to append task."));
@@ -1285,7 +1288,8 @@ public class NodeImpl implements Node, RaftServerService {
                 task.entry.setType(EnumOutter.EntryType.ENTRY_TYPE_DATA);
                 entries.add(task.entry);
             }
-            this.logManager.appendEntries(entries, new LeaderStableClosure(entries));
+            // 写入日志
+            this.logManager.appendEntries(entries, new LeaderStableClosure(entries)/*该回调用于写入本地成功后，更新pendingIndex的票数信息*/);
             // update conf.first
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
         } finally {
@@ -1427,6 +1431,7 @@ public class NodeImpl implements Node, RaftServerService {
                             final RpcResponseClosure<ReadIndexResponse> closure) {
         final int quorum = getQuorum();
         if (quorum <= 1) {
+            // 只有一个节点，直接读取commitIndex
             // Only one peer, fast path.
             respBuilder.setSuccess(true) //
                 .setIndex(this.ballotBox.getLastCommittedIndex());
@@ -1437,6 +1442,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         final long lastCommittedIndex = this.ballotBox.getLastCommittedIndex();
         if (this.logManager.getTerm(lastCommittedIndex) != this.currTerm) {
+            // 当leader在当前term还没有提交任何，拒接readOnlyRequest
             // Reject read only request when this leader has not committed any log entry at its term
             closure
                 .run(new Status(
@@ -1445,9 +1451,11 @@ public class NodeImpl implements Node, RaftServerService {
                     lastCommittedIndex, this.currTerm));
             return;
         }
+        // 设置commitIndex
         respBuilder.setIndex(lastCommittedIndex);
 
         if (request.getPeerId() != null) {
+            // 请求来自follower或learner，检查对方节点是否还在配置中
             // request from follower or learner, check if the follower/learner is in current conf.
             final PeerId peer = new PeerId();
             peer.parse(request.getServerId());
@@ -1459,6 +1467,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
 
         ReadOnlyOption readOnlyOpt = this.raftOptions.getReadOnlyOptions();
+        // 检查leader租赁时间是否到期,否则需要将配置改为ReadOnlySafe
         if (readOnlyOpt == ReadOnlyOption.ReadOnlyLeaseBased && !isLeaderLeaseValid()) {
             // If leader lease timeout, we must change option to ReadOnlySafe
             readOnlyOpt = ReadOnlyOption.ReadOnlySafe;
@@ -1591,7 +1600,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
-    // in read_lock
+    // in read_lock,检查leader租赁时间是否到期
     private boolean isLeaderLeaseValid() {
         final long monotonicNowMs = Utils.monotonicMs();
         if (checkLeaderLease(monotonicNowMs)) {
