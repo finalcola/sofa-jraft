@@ -1475,6 +1475,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         switch (readOnlyOpt) {
             case ReadOnlySafe:
+                // 该模式下需要向folower发送心跳，超过半数才返回响应
                 final List<PeerId> peers = this.conf.getConf().getPeers();
                 Requires.requireTrue(peers != null && !peers.isEmpty(), "Empty peers");
                 final ReadIndexHeartbeatResponseClosure heartbeatDone = new ReadIndexHeartbeatResponseClosure(closure,

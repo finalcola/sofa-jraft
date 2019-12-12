@@ -200,7 +200,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         }
     }
 
-    // 执行读取
+    // 执行读取commitIndex操作
     private void executeReadIndexEvents(final List<ReadIndexEvent> events) {
         if (events.isEmpty()) {
             return;
