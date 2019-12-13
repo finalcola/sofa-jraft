@@ -168,14 +168,16 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
             boolean doUnlock = true;
             ReadOnlyServiceImpl.this.lock.lock();
             try {
-                // 已提交
+                // 已提交到状态机
                 if (readIndexStatus.isApplied(ReadOnlyServiceImpl.this.fsmCaller.getLastAppliedIndex())) {
                     // Already applied, notify readIndex request.
                     ReadOnlyServiceImpl.this.lock.unlock();
                     doUnlock = false;
+                    // 通知回调
                     notifySuccess(readIndexStatus);
                 } else {
                     // Not applied, add it to pending-notify cache.
+                    // 还没有提交到状态机，添加到待通知队列
                     ReadOnlyServiceImpl.this.pendingNotifyStatus
                         .computeIfAbsent(readIndexStatus.getIndex(), k -> new ArrayList<>(10)) //
                         .add(readIndexStatus);

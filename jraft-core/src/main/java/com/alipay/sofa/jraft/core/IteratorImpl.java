@@ -33,7 +33,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * The iterator implementation.
- *
+ * 封装lastAppliedIndex到commitIndex之间日志、回调的读取，类似迭代器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 3:28:37 PM
@@ -80,6 +80,7 @@ public class IteratorImpl {
         return this.error;
     }
 
+    // 未读取完成，并且未发生异常
     public boolean isGood() {
         return this.currentIndex <= this.committedIndex && !hasError();
     }
@@ -90,6 +91,7 @@ public class IteratorImpl {
 
     /**
      * Move to next
+     * 读取下一条log
      */
     public void next() {
         this.currEntry = null; //release current entry
@@ -98,6 +100,7 @@ public class IteratorImpl {
             ++this.currentIndex;
             if (this.currentIndex <= this.committedIndex) {
                 try {
+                    // 读取日志
                     this.currEntry = this.logManager.getEntry(this.currentIndex);
                     if (this.currEntry == null) {
                         getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
@@ -118,6 +121,7 @@ public class IteratorImpl {
         return this.currentIndex;
     }
 
+    // 返回当前index对应的回调
     public Closure done() {
         if (this.currentIndex < this.firstClosureIndex) {
             return null;

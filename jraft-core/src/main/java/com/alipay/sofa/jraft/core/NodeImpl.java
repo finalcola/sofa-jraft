@@ -1387,9 +1387,11 @@ public class NodeImpl implements Node, RaftServerService {
         try {
             switch (this.state) {
                 case STATE_LEADER:
+                    // 处理ReadIndex
                     readLeader(request, ReadIndexResponse.newBuilder(), done);
                     break;
                 case STATE_FOLLOWER:
+                    // 当前节点为follower，将ReadIndex请求转发给leader
                     readFollower(request, done);
                     break;
                 case STATE_TRANSFERRING:
@@ -1414,12 +1416,14 @@ public class NodeImpl implements Node, RaftServerService {
         return c.getPeers().size() / 2 + 1;
     }
 
+    // 当前节点为follower，将ReadIndex请求转发给leader
     private void readFollower(final ReadIndexRequest request, final RpcResponseClosure<ReadIndexResponse> closure) {
         if (this.leaderId == null || this.leaderId.isEmpty()) {
             closure.run(new Status(RaftError.EPERM, "No leader at term %d.", this.currTerm));
             return;
         }
         // send request to leader.
+        // 将请求转发到leader
         final ReadIndexRequest newRequest = ReadIndexRequest.newBuilder() //
             .mergeFrom(request) //
             .setPeerId(this.leaderId.toString()) //
@@ -1442,7 +1446,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         final long lastCommittedIndex = this.ballotBox.getLastCommittedIndex();
         if (this.logManager.getTerm(lastCommittedIndex) != this.currTerm) {
-            // 当leader在当前term还没有提交任何，拒接readOnlyRequest
+            // 当leader在当前term还没有提交任何logEntry，拒接readOnlyRequest
             // Reject read only request when this leader has not committed any log entry at its term
             closure
                 .run(new Status(
@@ -1489,6 +1493,7 @@ public class NodeImpl implements Node, RaftServerService {
                 }
                 break;
             case ReadOnlyLeaseBased:
+                // 还在leader租赁时间内，直接返回
                 // Responses to followers and local node.
                 respBuilder.setSuccess(true);
                 closure.setResponse(respBuilder.build());

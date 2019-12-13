@@ -429,6 +429,7 @@ public class FSMCallerImpl implements FSMCaller {
             }
         }
         try {
+            // 提交日志
             if (endOfBatch && maxCommittedIndex >= 0) {
                 this.currTask = TaskType.COMMITTED;
                 doCommitted(maxCommittedIndex);
@@ -466,6 +467,7 @@ public class FSMCallerImpl implements FSMCaller {
         if (!this.error.getStatus().isOk()) {
             return;
         }
+        // 检查appliedIndex，如果commitIndex以前的日志已应用到状态机则返回
         final long lastAppliedIndex = this.lastAppliedIndex.get();
         // We can tolerate the disorder of committed_index
         if (lastAppliedIndex >= committedIndex) {
@@ -483,17 +485,20 @@ public class FSMCallerImpl implements FSMCaller {
             onTaskCommitted(taskClosures);
 
             Requires.requireTrue(firstClosureIndex >= 0, "Invalid firstClosureIndex");
+            // 封装lastAppliedIndex到commitIndex之间日志、回调的读取
             final IteratorImpl iterImpl = new IteratorImpl(this.fsm, this.logManager, closures, firstClosureIndex,
                 lastAppliedIndex, committedIndex, this.applyingIndex);
+            // 未读取完成，并且未发生异常
             while (iterImpl.isGood()) {
                 final LogEntry logEntry = iterImpl.entry();
                 if (logEntry.getType() != EnumOutter.EntryType.ENTRY_TYPE_DATA) {
                     if (logEntry.getType() == EnumOutter.EntryType.ENTRY_TYPE_CONFIGURATION) {
                         if (logEntry.getOldPeers() != null && !logEntry.getOldPeers().isEmpty()) {
                             // Joint stage is not supposed to be noticeable by end users.
+                            // 通知状态机，配置更新
                             this.fsm.onConfigurationCommitted(new Configuration(iterImpl.entry().getPeers()));
                         }
-                    }
+                    }// 通知回调
                     if (iterImpl.done() != null) {
                         // For other entries, we have nothing to do besides flush the
                         // pending tasks and run this closure to notify the caller that the
@@ -505,6 +510,7 @@ public class FSMCallerImpl implements FSMCaller {
                 }
 
                 // Apply data task to user state machine
+                // 将数据应用到状态机
                 doApplyTasks(iterImpl);
             }
 
@@ -533,6 +539,7 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     private void doApplyTasks(final IteratorImpl iterImpl) {
+        // 封装index的连续读取，直到为空、异常、配置型日志时停止
         final IteratorWrapper iter = new IteratorWrapper(iterImpl);
         final long startApplyMs = Utils.monotonicMs();
         final long startIndex = iter.getIndex();
