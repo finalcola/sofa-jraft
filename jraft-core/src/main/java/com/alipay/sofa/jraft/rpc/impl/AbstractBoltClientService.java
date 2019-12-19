@@ -64,6 +64,7 @@ public abstract class AbstractBoltClientService implements ClientService {
     protected volatile RpcClient    rpcClient;
     protected ThreadPoolExecutor    rpcExecutor;
     protected RpcOptions            rpcOptions;
+    // 解析地址
     protected JRaftRpcAddressParser rpcAddressParser;
     protected InvokeContext         defaultInvokeCtx;
 
@@ -90,6 +91,7 @@ public abstract class AbstractBoltClientService implements ClientService {
         this.rpcAddressParser = new JRaftRpcAddressParser();
         this.defaultInvokeCtx = new InvokeContext();
         this.defaultInvokeCtx.put(InvokeContext.BOLT_CRC_SWITCH, this.rpcOptions.isEnableRpcChecksum());
+        // 初始化rpcClient
         return initRpcClient(this.rpcOptions.getRpcProcessorThreadPoolSize());
     }
 
@@ -97,10 +99,12 @@ public abstract class AbstractBoltClientService implements ClientService {
         // NO-OP
     }
 
+    // 初始化rpcClient
     protected boolean initRpcClient(final int rpcProcessorThreadPoolSize) {
         this.rpcClient = new RpcClient();
         configRpcClient(this.rpcClient);
         this.rpcClient.init();
+        // 初始化线程池
         this.rpcExecutor = ThreadPoolUtil.newBuilder() //
             .poolName("JRaft-RPC-Processor") //
             .enableMetric(true) //
@@ -137,9 +141,11 @@ public abstract class AbstractBoltClientService implements ClientService {
             return true;
         }
         try {
+            // 发送PingRequest
             final PingRequest req = PingRequest.newBuilder() //
                 .setSendTimestamp(System.currentTimeMillis()) //
                 .build();
+            // 检查返回响应码
             final ErrorResponse resp = (ErrorResponse) rc.invokeSync(endpoint.toString(), req, this.defaultInvokeCtx,
                 this.rpcOptions.getRpcConnectTimeoutMs());
             return resp.getErrorCode() == 0;

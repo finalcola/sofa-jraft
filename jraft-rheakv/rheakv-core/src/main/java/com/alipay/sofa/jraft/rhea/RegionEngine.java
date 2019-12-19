@@ -62,10 +62,13 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
     private final Region        region;
     private final StoreEngine   storeEngine;
 
+    // RAFT协议封装RawKVStore接口操作
     private RaftRawKVStore      raftRawKVStore;
+    // raftRawKVStore基础上加入统计功能
     private MetricsRawKVStore   metricsRawKVStore;
     private RaftGroupService    raftGroupService;
     private Node                node;
+    // 状态机
     private KVStoreStateMachine fsm;
     private RegionEngineOptions regionOpts;
 
@@ -85,6 +88,7 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
             return true;
         }
         this.regionOpts = Requires.requireNonNull(opts, "opts");
+        // 初始化状态机
         this.fsm = new KVStoreStateMachine(this.region, this.storeEngine);
 
         // node options
@@ -97,6 +101,7 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
             // metricsReportPeriod > 0 means enable metrics
             nodeOpts.setEnableMetrics(true);
         }
+        // raft节点相关参数
         nodeOpts.setInitialConf(new Configuration(JRaftHelper.toJRaftPeerIdList(this.region.getPeers())));
         nodeOpts.setFsm(this.fsm);
         final String raftDataPath = opts.getRaftDataPath();
@@ -123,8 +128,10 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
         final Endpoint serverAddress = opts.getServerAddress();
         final PeerId serverId = new PeerId(serverAddress, 0);
         final RpcServer rpcServer = this.storeEngine.getRpcServer();
+        // 创建RaftGroupService、Node
         this.raftGroupService = new RaftGroupService(opts.getRaftGroupId(), serverId, nodeOpts, rpcServer, true);
         this.node = this.raftGroupService.start(false);
+        // 更新路由表
         RouteTable.getInstance().updateConfiguration(this.raftGroupService.getGroupId(), nodeOpts.getInitialConf());
         if (this.node != null) {
             final RawKVStore rawKVStore = this.storeEngine.getRawKVStore();

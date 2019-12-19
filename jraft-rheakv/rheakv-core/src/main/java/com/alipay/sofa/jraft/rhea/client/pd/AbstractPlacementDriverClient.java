@@ -61,6 +61,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
 
     private static final Logger         LOG              = LoggerFactory.getLogger(AbstractPlacementDriverClient.class);
 
+    // 路由表
     protected final RegionRouteTable    regionRouteTable = new RegionRouteTable();
     protected final long                clusterId;
     protected final String              clusterName;
@@ -78,6 +79,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
     @Override
     public synchronized boolean init(final PlacementDriverOptions opts) {
         initCli(opts.getCliOptions());
+        // 创建rpc组件
         this.pdRpcService = new DefaultPlacementDriverRpcService(this);
         RpcOptions rpcOpts = opts.getPdRpcOptions();
         if (rpcOpts == null) {
@@ -376,6 +378,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         this.regionRouteTable.addOrUpdateRegion(region);
     }
 
+    // 根据配置创建Region
     protected Region getLocalRegionMetadata(final RegionEngineOptions opts) {
         final long regionId = Requires.requireNonNull(opts.getRegionId(), "opts.regionId");
         Requires.requireTrue(regionId >= Region.MIN_ID_WITH_MANUAL_CONF, "opts.regionId must >= "

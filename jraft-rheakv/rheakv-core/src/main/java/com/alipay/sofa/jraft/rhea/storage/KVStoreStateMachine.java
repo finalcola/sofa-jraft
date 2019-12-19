@@ -90,6 +90,7 @@ public class KVStoreStateMachine extends StateMachineAdapter {
                 if (done != null) {
                     kvOp = done.getOperation();
                 } else {
+                    // follower节点
                     final ByteBuffer buf = it.getData();
                     try {
                         if (buf.hasArray()) {
@@ -104,6 +105,7 @@ public class KVStoreStateMachine extends StateMachineAdapter {
                 }
                 final KVState first = kvStates.getFirstElement();
                 if (first != null && !first.isSameOp(kvOp)) {
+                    // 批量将相同op的logEntry应用到状态机，并回收list
                     applied += batchApplyAndRecycle(first.getOpByte(), kvStates);
                     kvStates = KVStateOutputList.newInstance();
                 }
@@ -126,6 +128,7 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         }
     }
 
+    // 批量将op应用到状态机，并回收list
     private int batchApplyAndRecycle(final byte opByte, final KVStateOutputList kvStates) {
         try {
             final int size = kvStates.size();
@@ -138,13 +141,14 @@ public class KVStoreStateMachine extends StateMachineAdapter {
                 throw new IllegalKVOperationException("Unknown operation: " + opByte);
             }
 
-            // metrics: op qps
+            // metrics: op qps  统计数据
             final Meter opApplyMeter = KVMetrics.meter(STATE_MACHINE_APPLY_QPS, String.valueOf(this.region.getId()),
                 KVOperation.opName(opByte));
             opApplyMeter.mark(size);
             this.batchWriteHistogram.update(size);
 
             // do batch apply
+            // 根据op，存储
             batchApply(opByte, kvStates);
 
             return size;

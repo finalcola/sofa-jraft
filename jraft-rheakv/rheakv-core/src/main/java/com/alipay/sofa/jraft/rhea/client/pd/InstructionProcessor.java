@@ -47,9 +47,11 @@ public class InstructionProcessor {
         this.storeEngine = storeEngine;
     }
 
+    // 处理PD返回的指令
     public void process(final List<Instruction> instructions) {
         LOG.info("Received instructions: {}.", instructions);
         for (final Instruction instruction : instructions) {
+            // 校验
             if (!checkInstruction(instruction)) {
                 continue;
             }
@@ -58,6 +60,7 @@ public class InstructionProcessor {
         }
     }
 
+    // 处理分割Region
     private boolean processSplit(final Instruction instruction) {
         try {
             final Instruction.RangeSplit rangeSplit = instruction.getRangeSplit();
@@ -102,6 +105,7 @@ public class InstructionProcessor {
         }
     }
 
+    // 处理leader转移任务
     private boolean processTransferLeader(final Instruction instruction) {
         try {
             final Instruction.TransferLeader transferLeader = instruction.getTransferLeader();

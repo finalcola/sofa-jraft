@@ -68,7 +68,9 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
     private final PlacementDriverClient pdClient;
     private final RpcClient             rpcClient;
 
+    // 收集存储组件状态
     private StatsCollector              statsCollector;
+    // 处理PD返回的指令
     private InstructionProcessor        instructionProcessor;
     private int                         heartbeatRpcTimeoutMillis;
     private ThreadPoolExecutor          heartbeatRpcCallbackExecutor;
@@ -119,6 +121,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
                                                + regionHeartbeatIntervalSeconds);
         }
         final long now = System.currentTimeMillis();
+        // 定时任务用于向PD发送心跳
         final StoreHeartbeatTask storeHeartbeatTask = new StoreHeartbeatTask(storeHeartbeatIntervalSeconds, now, false);
         final RegionHeartbeatTask regionHeartbeatTask = new RegionHeartbeatTask(regionHeartbeatIntervalSeconds, now,
             false);
@@ -136,6 +139,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
         }
     }
 
+    // 向PD发送StoreHeartbeatRequest请求,并继续调度任务
     private void sendStoreHeartbeat(final long nextDelay, final boolean forceRefreshLeader, final long lastTime) {
         final long now = System.currentTimeMillis();
         final StoreHeartbeatRequest request = new StoreHeartbeatRequest();
@@ -156,6 +160,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
         callAsyncWithRpc(endpoint, request, closure);
     }
 
+    // 向PD发送RegionHeartbeatRequest
     private void sendRegionHeartbeat(final long nextDelay, final long lastTime, final boolean forceRefreshLeader) {
         final long now = System.currentTimeMillis();
         final RegionHeartbeatRequest request = new RegionHeartbeatRequest();
@@ -269,6 +274,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
         @Override
         public void run(final Timeout timeout) throws Exception {
             try {
+                // 向PD发送StoreHeartbeatRequest请求,并继续调度任务
                 sendStoreHeartbeat(this.nextDelay, this.forceRefreshLeader, this.lastTime);
             } catch (final Throwable t) {
                 LOG.error("Caught a error on sending [StoreHeartbeat]: {}.", StackTraceUtil.stackTrace(t));
@@ -295,6 +301,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
         @Override
         public void run(final Timeout timeout) throws Exception {
             try {
+                // 向PD发送RegionHeartbeatRequest
                 sendRegionHeartbeat(this.nextDelay, this.lastTime, this.forceRefreshLeader);
             } catch (final Throwable t) {
                 LOG.error("Caught a error on sending [RegionHeartbeat]: {}.", StackTraceUtil.stackTrace(t));

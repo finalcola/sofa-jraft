@@ -25,7 +25,7 @@ import com.alipay.sofa.jraft.rhea.util.Maps;
 
 /**
  * The container of raft state listener, each key(id) corresponds to a listener group.
- *
+ * StateListener的容器，每个id对应一个listener组
  * @author jiachun.fjc
  */
 public class StateListenerContainer<K> {

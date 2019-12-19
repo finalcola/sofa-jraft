@@ -67,6 +67,7 @@ public class KVCommandProcessor<T extends BaseRequest> extends AsyncUserProcesso
         Requires.requireNonNull(request, "request");
         final RequestProcessClosure<BaseRequest, BaseResponse<?>> closure = new RequestProcessClosure<>(request,
             bizCtx, asyncCtx);
+        // 获取对应的RegionKVService
         final RegionKVService regionKVService = this.storeEngine.getRegionKVService(request.getRegionId());
         if (regionKVService == null) {
             final NoRegionFoundResponse noRegion = new NoRegionFoundResponse();
@@ -76,6 +77,7 @@ public class KVCommandProcessor<T extends BaseRequest> extends AsyncUserProcesso
             closure.sendResponse(noRegion);
             return;
         }
+        // 由RegionKVService处理请求
         switch (request.magic()) {
             case BaseRequest.PUT:
                 regionKVService.handlePutRequest((PutRequest) request, closure);

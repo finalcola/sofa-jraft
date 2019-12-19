@@ -122,7 +122,7 @@ import com.lmax.disruptor.dsl.Disruptor;
  *                         │                                                 │
  *                         │                                                 │
  * ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─     │  ┌ ─ ─ ─ ─ ─ ─ ┐           ┌ ─ ─ ─ ─ ─ ─ ┐      │    ┌ ─ ─ ─ ─ ─ ─ ┐
- *  startKey1=byte[0] │    │     startKey2                 startKey3         │       startKey4
+ *  startKey1=byte[0] │    │     startKey2                 startKey3         │       startKey4≈
  * └ ─ ─ ─ ┬ ─ ─ ─ ─ ─     │  └ ─ ─ ─│─ ─ ─ ┘           └ ─ ─ ─│─ ─ ─ ┘      │    └ ─ ─ ─│─ ─ ─ ┘
  *         │               │         │                         │             │           │
  *         ▼───────────────▼─────────▼─────────────────────────▼─────────────▼───────────▼─────────────────────────┐
@@ -193,6 +193,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
         ExtSerializerSupports.init();
     }
 
+    // 封装StateListener的容器
     private final StateListenerContainer<Long> stateListenerContainer = new StateListenerContainer<>();
     private StoreEngine                        storeEngine;
     private PlacementDriverClient              pdClient;
@@ -225,6 +226,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
             // if blank, extends parent's value
             pdOpts.setInitialServerList(opts.getInitialServerList());
         }
+        // 初始化PD
         if (pdOpts.isFake()) {
             this.pdClient = new FakePlacementDriverClient(opts.getClusterId(), clusterName);
         } else {
@@ -235,6 +237,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
             return false;
         }
         // init store engine
+        // 初始化存储引擎
         final StoreEngineOptions stOpts = opts.getStoreEngineOptions();
         if (stOpts != null) {
             stOpts.setInitialServerList(opts.getInitialServerList());

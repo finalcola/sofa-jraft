@@ -89,8 +89,10 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         ExtSerializerSupports.init();
     }
 
-    private final ConcurrentMap<Long, RegionKVService> regionKVServiceTable = Maps.newConcurrentMapLong();
-    private final ConcurrentMap<Long, RegionEngine>    regionEngineTable    = Maps.newConcurrentMapLong();
+    // RegionKVService注册表，每个Region对应一个RegionKVService
+    private final ConcurrentMap<Long/*regionId*/, RegionKVService> regionKVServiceTable = Maps.newConcurrentMapLong();
+    // region表
+    private final ConcurrentMap<Long/*regionId*/, RegionEngine>    regionEngineTable    = Maps.newConcurrentMapLong();
     private final StateListenerContainer<Long>         stateListenerContainer;
     private final PlacementDriverClient                pdClient;
     private final long                                 clusterId;
@@ -102,6 +104,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
     private File                                       dbPath;
     private RpcServer                                  rpcServer;
     private BatchRawKVStore<?>                         rawKVStore;
+    // 向PD发送心跳任务的组件
     private HeartbeatSender                            heartbeatSender;
     private StoreEngineOptions                         storeOpts;
 
@@ -184,6 +187,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
                 opts.getSnapshotMaxThreads());
         }
         // init rpc executors
+        // 初始化rpc相关线程池
         final boolean useSharedRpcExecutor = opts.isUseSharedRpcExecutor();
         if (!useSharedRpcExecutor) {
             if (this.cliRpcExecutor == null) {
@@ -200,13 +204,17 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         startMetricReporters(metricsReportPeriod);
         // init rpc server
         this.rpcServer = new RpcServer(port, true, true);
+        // 初始化rpcServer并注册处理器
         RaftRpcServerFactory.addRaftRequestProcessors(this.rpcServer, this.raftRpcExecutor, this.cliRpcExecutor);
+        // 注册业务处理器
         StoreEngineHelper.addKvStoreRequestProcessor(this.rpcServer, this);
+        // 启动
         if (!this.rpcServer.start()) {
             LOG.error("Fail to init [RpcServer].");
             return false;
         }
         // init db store
+        // 初始化底层存储组件，支持RocksDB、MemoryDB(基于ConcurrentNavigableMap)
         if (!initRawKVStore(opts)) {
             return false;
         }
@@ -214,11 +222,13 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
             DescriberManager.getInstance().addDescriber((Describer) this.rawKVStore);
         }
         // init all region engine
+        // 初始化Region
         if (!initAllRegionEngine(opts, store)) {
             LOG.error("Fail to init all [RegionEngine].");
             return false;
         }
         // heartbeat sender
+        // 创建并初始化与PD的心跳任务
         if (this.pdClient instanceof RemotePlacementDriverClient) {
             HeartbeatOptions heartbeatOpts = opts.getHeartbeatOptions();
             if (heartbeatOpts == null) {
@@ -587,6 +597,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         }
     }
 
+    // 初始化底层存储组件，支持RocksDB、MemoryDB(基于ConcurrentNavigableMap)
     private boolean initRawKVStore(final StoreEngineOptions opts) {
         final StorageType storageType = opts.getStorageType();
         switch (storageType) {
@@ -643,10 +654,12 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         return true;
     }
 
+    // 为每个Region创建RegionEngine（初始化raft协议相关组件）
     private boolean initAllRegionEngine(final StoreEngineOptions opts, final Store store) {
         Requires.requireNonNull(opts, "opts");
         Requires.requireNonNull(store, "store");
         String baseRaftDataPath = opts.getRaftDataPath();
+        // 创建Raft相关目录
         if (Strings.isNotBlank(baseRaftDataPath)) {
             try {
                 FileUtils.forceMkdir(new File(baseRaftDataPath));
@@ -661,6 +674,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         final List<RegionEngineOptions> rOptsList = opts.getRegionEngineOptionsList();
         final List<Region> regionList = store.getRegions();
         Requires.requireTrue(rOptsList.size() == regionList.size());
+        // 为每个Region创建一个RegionEngine
         for (int i = 0; i < rOptsList.size(); i++) {
             final RegionEngineOptions rOpts = rOptsList.get(i);
             final Region region = regionList.get(i);
@@ -669,8 +683,10 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
                 rOpts.setRaftDataPath(Paths.get(baseRaftDataPath, childPath).toString());
             }
             Requires.requireNonNull(region.getRegionEpoch(), "regionEpoch");
+            // 创建、初始化RegionEngine，并注册RegionKVService
             final RegionEngine engine = new RegionEngine(region, this);
             if (engine.init(rOpts)) {
+                // 注册DefaultRegionKVService（处理client请求）
                 final RegionKVService regionKVService = new DefaultRegionKVService(engine);
                 registerRegionKVService(regionKVService);
                 this.regionEngineTable.put(region.getId(), engine);

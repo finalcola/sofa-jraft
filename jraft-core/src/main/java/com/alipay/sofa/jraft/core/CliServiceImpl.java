@@ -75,6 +75,7 @@ public class CliServiceImpl implements CliService {
     private static final Logger LOG = LoggerFactory.getLogger(CliServiceImpl.class);
 
     private CliOptions          cliOptions;
+    // 封装RpcClient
     private CliClientService    cliClientService;
 
     @Override
@@ -104,15 +105,18 @@ public class CliServiceImpl implements CliService {
         Requires.requireNonNull(conf, "Null configuration");
         Requires.requireNonNull(peer, "Null peer");
 
+        // 获取leader，会发送GetLeader请求
         final PeerId leaderId = new PeerId();
         final Status st = getLeader(groupId, conf, leaderId);
         if (!st.isOk()) {
             return st;
         }
 
+        // 连接leader
         if (!this.cliClientService.connect(leaderId.getEndpoint())) {
             return new Status(-1, "Fail to init channel to leader %s", leaderId);
         }
+        // 发送AddPeer请求
         final AddPeerRequest.Builder rb = AddPeerRequest.newBuilder() //
             .setGroupId(groupId) //
             .setLeaderId(leaderId.toString()) //
@@ -121,6 +125,7 @@ public class CliServiceImpl implements CliService {
         try {
             final Message result = this.cliClientService.addPeer(leaderId.getEndpoint(), rb.build(), null).get();
             if (result instanceof AddPeerResponse) {
+                // 解析响应
                 final AddPeerResponse resp = (AddPeerResponse) result;
                 final Configuration oldConf = new Configuration();
                 for (final String peerIdStr : resp.getOldPeersList()) {
@@ -465,6 +470,7 @@ public class CliServiceImpl implements CliService {
         }
 
         final Status st = new Status(-1, "Fail to get leader of group %s", groupId);
+        // 向conf中的peer发送GetLeader请求
         for (final PeerId peer : conf) {
             if (!this.cliClientService.connect(peer.getEndpoint())) {
                 LOG.error("Fail to connect peer {} to get leader for group {}.", peer, groupId);
@@ -489,6 +495,7 @@ public class CliServiceImpl implements CliService {
                         st.setError(-1, "%s, %s", savedMsg, ((ErrorResponse) msg).getErrorMsg());
                     }
                 } else {
+                    // 解析响应
                     final GetLeaderResponse response = (GetLeaderResponse) msg;
                     if (leaderId.parse(response.getLeaderId())) {
                         break;
