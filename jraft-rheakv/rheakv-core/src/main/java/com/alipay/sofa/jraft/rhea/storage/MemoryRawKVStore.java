@@ -336,6 +336,7 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
             final long now = acquirer.getLockingTimestamp();
             final long timeoutMillis = acquirer.getLeaseMillis();
             final ByteArray wrappedKey = ByteArray.wrap(key);
+            // 已存在的锁
             final DistributedLock.Owner prevOwner = this.lockerDB.get(wrappedKey);
 
             final DistributedLock.Owner owner;

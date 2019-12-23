@@ -94,6 +94,7 @@ class DefaultDistributedLock extends DistributedLock<byte[]> {
             return owner;
         }
         // schedule keeping lease
+        // 自动保持续租
         if (this.watchdogFuture == null) {
             synchronized (this) {
                 if (this.watchdogFuture == null) {
