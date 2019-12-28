@@ -82,6 +82,7 @@ public class BoltRaftClientService extends AbstractBoltClientService implements 
 
     @Override
     public synchronized boolean init(final RpcOptions rpcOptions) {
+        // 初始化rpc环境和rpcClient
         final boolean ret = super.init(rpcOptions);
         if (ret) {
             this.nodeOptions = (NodeOptions) rpcOptions;

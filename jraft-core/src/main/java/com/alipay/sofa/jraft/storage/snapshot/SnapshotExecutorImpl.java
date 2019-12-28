@@ -225,6 +225,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
     }
 
+    // 创建snapshot存储组件,并加载以保存的快照
     @Override
     public boolean init(final SnapshotExecutorOptions opts) {
         if (StringUtils.isBlank(opts.getUri())) {
@@ -268,9 +269,9 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         LOG.info("Loading snapshot, meta={}.", this.loadingSnapshotMeta);
         this.loadingSnapshot = true;
         this.runningJobs.incrementAndGet();
-        // 封装加载snapshot后的回调任务
+        // 封装加载snapshot后的回调任务（更新logManager中的快照信息并截断日志）
         final FirstSnapshotLoadDone done = new FirstSnapshotLoadDone(reader);
-        // 交由fsmCaller调度执行
+        // 交由fsmCaller调度执行(通知状态机加载快照)
         Requires.requireTrue(this.fsmCaller.onSnapshotLoad(done));
         // 等待执行完成
         try {
@@ -345,8 +346,9 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 return;
             }
             this.savingSnapshot = true;
-            // 执行保存快照操作并异步执行回调
+            // 执行保存快照后的回调(通知传入的参数done)
             final SaveSnapshotDone saveSnapshotDone = new SaveSnapshotDone(writer, done, null);
+            // 通知状态机保存快照
             if (!this.fsmCaller.onSnapshotSave(saveSnapshotDone)) {
                 Utils.runClosureInThread(done, new Status(RaftError.EHOSTDOWN, "The raft node is down."));
                 return;
@@ -439,7 +441,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.lastSnapshotTerm = this.loadingSnapshotMeta.getLastIncludedTerm();
                 doUnlock = false;
                 this.lock.unlock();
-                // 更新快照
+                // 更新快照，会截断之前的日期
                 this.logManager.setSnapshot(this.loadingSnapshotMeta); //should be out of lock
                 doUnlock = true;
                 this.lock.lock();
@@ -452,6 +454,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             LOG.info(sb.toString());
             doUnlock = false;
             this.lock.unlock();
+            // 加载快照后，更新Node中的配置信息
             if (this.node != null) {
                 this.node.updateConfigurationAfterInstallingSnapshot();
             }

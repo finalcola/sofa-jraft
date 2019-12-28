@@ -527,7 +527,9 @@ public class NodeImpl implements Node, RaftServerService {
         LOG.info("The number of active nodes increment to {}.", num);
     }
 
+    // 初始化快照组件，并加载快照
     private boolean initSnapshotStorage() {
+        // 未开启快照功能
         if (StringUtils.isEmpty(this.options.getSnapshotUri())) {
             LOG.warn("Do not set snapshot uri, ignore initSnapshotStorage.");
             return true;
@@ -543,6 +545,7 @@ public class NodeImpl implements Node, RaftServerService {
         opts.setFilterBeforeCopyRemote(this.options.isFilterBeforeCopyRemote());
         // get snapshot throttle
         opts.setSnapshotThrottle(this.options.getSnapshotThrottle());
+        // 创建snapshot存储组件,并加载以保存的快照
         return this.snapshotExecutor.init(opts);
     }
 
@@ -559,13 +562,16 @@ public class NodeImpl implements Node, RaftServerService {
         opts.setNodeMetrics(this.metrics);
         opts.setDisruptorBufferSize(this.raftOptions.getDisruptorBufferSize());
         opts.setRaftOptions(this.raftOptions);
+        // 初始化日志组件，并加载index、term、配置信息
         return this.logManager.init(opts);
     }
 
+    // 加载本地的meta文件中保存的term和投票信息
     private boolean initMetaStorage() {
         this.metaStorage = this.serviceFactory.createRaftMetaStorage(this.options.getRaftMetaUri(), this.raftOptions);
         RaftMetaStorageOptions opts = new RaftMetaStorageOptions();
         opts.setNode(this);
+        // 加载本地的meta文件，读取term和投票信息
         if (!this.metaStorage.init(opts)) {
             LOG.error("Node {} init meta storage failed, uri={}.", this.serverId, this.options.getRaftMetaUri());
             return false;
@@ -848,12 +854,12 @@ public class NodeImpl implements Node, RaftServerService {
 
         // 创建状态机管理组件
         this.fsmCaller = new FSMCallerImpl();
-        // 创建并初始化logStorage、logManager
+        // 创建并初始化logStorage、logManager，并加载index、term、配置信息
         if (!initLogStorage()) {
             LOG.error("Node {} initLogStorage failed.", getNodeId());
             return false;
         }
-        // 创建并初始化MetaStore
+        // 创建并初始化MetaStore，本地保存的term和投票信息
         if (!initMetaStorage()) {
             LOG.error("Node {} initMetaStorage failed.", getNodeId());
             return false;
@@ -872,7 +878,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Node {} init ballotBox failed.", getNodeId());
             return false;
         }
-        // 初始化快照管理组件
+        // 初始化快照组件，并加载快照
         if (!initSnapshotStorage()) {
             LOG.error("Node {} initSnapshotStorage failed.", getNodeId());
             return false;
@@ -888,8 +894,10 @@ public class NodeImpl implements Node, RaftServerService {
         this.conf.setId(new LogId());
         // if have log using conf in log, else using conf in options
         if (this.logManager.getLastLogIndex() > 0) {
+            // 如果log存在记录，则读取log中的配置
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
         } else {
+            // 读取配置的集群信息
             this.conf.setConf(this.options.getInitialConf());
         }
 
@@ -916,6 +924,7 @@ public class NodeImpl implements Node, RaftServerService {
         // Adds metric registry to RPC service.
         this.options.setMetricRegistry(this.metrics.getMetricRegistry());
 
+        // 初始化rpc环境和rpcClient
         if (!this.rpcService.init(this.options)) {
             LOG.error("Fail to init rpc service.");
             return false;
@@ -923,7 +932,7 @@ public class NodeImpl implements Node, RaftServerService {
         // 初始化replicatorGroup
         this.replicatorGroup.init(new NodeId(this.groupId, this.serverId), rgOpts);
 
-        // 创建并初始化只读服务
+        // 创建并初始化读取服务(线性一致性读)
         this.readOnlyService = new ReadOnlyServiceImpl();
         final ReadOnlyServiceOptions rosOpts = new ReadOnlyServiceOptions();
         rosOpts.setFsmCaller(this.fsmCaller);
@@ -972,7 +981,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     // should be in writeLock
-    // 尝试竞选leader，先切换为candidate，term++，发生竞选请求
+    // 尝试竞选leader，先切换为candidate，term++，发送竞选请求
     private void electSelf() {
         long oldTerm;
         // 切换为Candidate，term+1，开始投票任务
@@ -1838,7 +1847,7 @@ public class NodeImpl implements Node, RaftServerService {
             final long localPrevLogTerm = this.logManager.getTerm(prevLogIndex);
             // 校验日志一致性
             if (localPrevLogTerm != prevLogTerm) {
-                // 统一index的日志term不匹配，拒绝该请求
+                // 同一index的日志term不匹配，拒绝该请求
                 final long lastLogIndex = this.logManager.getLastLogIndex();
 
                 LOG.warn(
@@ -2980,6 +2989,7 @@ public class NodeImpl implements Node, RaftServerService {
         doSnapshot(done);
     }
 
+    // 执行保存快照任务
     private void doSnapshot(final Closure done) {
         if (this.snapshotExecutor != null) {
             this.snapshotExecutor.doSnapshot(done);

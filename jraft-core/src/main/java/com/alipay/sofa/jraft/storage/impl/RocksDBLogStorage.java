@@ -243,6 +243,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
 
     /**
      * Save the first log index into conf column family.
+     * 将firstLogIndex保存到配置文件中
      */
     private boolean saveFirstLogIndex(final long firstLogIndex) {
         this.readLock.lock();
@@ -352,6 +353,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
         this.readLock.lock();
         RocksIterator it = null;
         try {
+            // 已读取过，直接返回
             if (this.hasLoadFirstLogIndex) {
                 return this.firstLogIndex;
             }
@@ -359,8 +361,11 @@ public class RocksDBLogStorage implements LogStorage, Describer {
             it = this.db.newIterator(this.defaultHandle, this.totalOrderReadOptions);
             it.seekToFirst();
             if (it.isValid()) {
+                // firstLogIndex
                 final long ret = Bits.getLong(it.key(), 0);
+                // 保存到配置文件
                 saveFirstLogIndex(ret);
+                // 设置到firstLogIndex字段
                 setFirstLogIndex(ret);
                 return ret;
             }
@@ -378,6 +383,7 @@ public class RocksDBLogStorage implements LogStorage, Describer {
         this.readLock.lock();
         checkState();
         try (final RocksIterator it = this.db.newIterator(this.defaultHandle, this.totalOrderReadOptions)) {
+            // 读取最后一条log的index
             it.seekToLast();
             if (it.isValid()) {
                 return Bits.getLong(it.key(), 0);

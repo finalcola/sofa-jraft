@@ -36,6 +36,7 @@ public class ConfigurationManager {
     private static final Logger                  LOG            = LoggerFactory.getLogger(ConfigurationManager.class);
 
     private final LinkedList<ConfigurationEntry> configurations = new LinkedList<>();
+    // 保存快照的index、term、配置
     private ConfigurationEntry                   snapshot       = new ConfigurationEntry();
 
     /**

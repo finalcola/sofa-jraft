@@ -972,10 +972,12 @@ public class Replicator implements ThreadId.OnError {
         }
     }
 
+    // 处理复制异常
     @Override
     public void onError(final ThreadId id, final Object data, final int errorCode) {
         final Replicator r = (Replicator) data;
         if (errorCode == RaftError.ESTOP.getNumber()) {
+            // 清理资源，取消未完成的请求和定时任务
             try {
                 for (final Inflight inflight : r.inflights) {
                     if (inflight != r.rpcInFly) {
@@ -1067,7 +1069,7 @@ public class Replicator implements ThreadId.OnError {
         Utils.runClosureInThread(savedClosure, savedClosure.getStatus());
     }
 
-    // 心跳超时，调用ThreadId的onError方法
+    // 心跳超时，调用ThreadId的onError方法(重新发送心跳)
     private static void onTimeout(final ThreadId id) {
         if (id != null) {
             id.setError(RaftError.ETIMEDOUT.getNumber());

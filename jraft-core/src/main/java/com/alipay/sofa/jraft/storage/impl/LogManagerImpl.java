@@ -88,7 +88,9 @@ public class LogManagerImpl implements LogManager {
     private volatile boolean                                 stopped;
     private volatile boolean                                 hasError;
     private long                                             nextWaitId;
+    // 磁盘末尾log的index和term
     private LogId                                            diskId                 = new LogId(0, 0);
+    // 应用到状态机的index和term
     private LogId                                            appliedId              = new LogId(0, 0);
     // TODO  use a lock-free concurrent list instead?
     private ArrayDeque<LogEntry>                             logsInMemory           = new ArrayDeque<>();
@@ -181,10 +183,12 @@ public class LogManagerImpl implements LogManager {
             lsOpts.setConfigurationManager(this.configManager);
             lsOpts.setLogEntryCodecFactory(opts.getLogEntryCodecFactory());
 
+            // 初始化底层存储组件并加载配置信息
             if (!this.logStorage.init(lsOpts)) {
                 LOG.error("Fail to init logStorage");
                 return false;
             }
+            // 读取index信息
             this.firstLogIndex = this.logStorage.getFirstLogIndex();
             this.lastLogIndex = this.logStorage.getLastLogIndex();
             this.diskId = new LogId(this.lastLogIndex, getTermFromLogStorage(this.lastLogIndex));
@@ -638,7 +642,7 @@ public class LogManagerImpl implements LogManager {
             final Configuration conf = confFromMeta(meta);
             final Configuration oldConf = oldConfFromMeta(meta);
 
-            // 设置最新的快照
+            // 设置最新的快照位置
             final ConfigurationEntry entry = new ConfigurationEntry(new LogId(meta.getLastIncludedIndex(),
                 meta.getLastIncludedTerm()), conf, oldConf);
             this.configManager.setSnapshot(entry);
@@ -650,12 +654,14 @@ public class LogManagerImpl implements LogManager {
             this.lastSnapshotId.setIndex(meta.getLastIncludedIndex());
             this.lastSnapshotId.setTerm(meta.getLastIncludedTerm());
 
+            // 更新应用位置
             if (this.lastSnapshotId.compareTo(this.appliedId) > 0) {
                 this.appliedId = this.lastSnapshotId.copy();
             }
 
             // 截断之前的数据
             if (term == 0) {
+                // 截断快照之前的日志
                 // last_included_index is larger than last_index
                 // FIXME: what if last_included_index is less than first_index?
                 truncatePrefix(meta.getLastIncludedIndex() + 1);
@@ -669,6 +675,7 @@ public class LogManagerImpl implements LogManager {
                     truncatePrefix(savedLastSnapshotIndex + 1);
                 }
             } else {
+                // 重新加载日志，将日志截断到lastIncludeIndex
                 if (!reset(meta.getLastIncludedIndex() + 1)) {
                     LOG.warn("Reset log manager failed, nextLogIndex={}", meta.getLastIncludedIndex() + 1);
                 }
@@ -1002,6 +1009,7 @@ public class LogManagerImpl implements LogManager {
             this.logsInMemory = new ArrayDeque<>();
             this.firstLogIndex = nextLogIndex;
             this.lastLogIndex = nextLogIndex - 1;
+            // 截断配置管理器组件
             this.configManager.truncatePrefix(this.firstLogIndex);
             this.configManager.truncateSuffix(this.lastLogIndex);
             final ResetClosure c = new ResetClosure(nextLogIndex);
