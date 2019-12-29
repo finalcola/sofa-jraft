@@ -667,6 +667,7 @@ public class Replicator implements ThreadId.OnError {
         // id is unlock in sendEntries
         if (!success) {
             //should reset states
+            // 清空inflights，阻塞一段时间
             r.resetInflights();
             r.state = State.Probe;
             r.block(Utils.nowMs(), status.getCode());
@@ -695,9 +696,10 @@ public class Replicator implements ThreadId.OnError {
     private void sendEmptyEntries(final boolean isHeartbeat,
                                   final RpcResponseClosure<AppendEntriesResponse> heartBeatClosure) {
         final AppendEntriesRequest.Builder rb = AppendEntriesRequest.newBuilder();
-        // 设置公共的参数
+        // 设置公共的参数（index、term、commitIndex等）
         if (!fillCommonFields(rb, this.nextIndex - 1, isHeartbeat)) {
             // id is unlock in installSnapshot
+            // nextIndex之前的日志已经被压缩为快照，发送InstallSnapshot请求
             installSnapshot();
             if (isHeartbeat && heartBeatClosure != null) {
                 Utils.runClosureInThread(heartBeatClosure, new Status(RaftError.EAGAIN,
@@ -718,6 +720,7 @@ public class Replicator implements ThreadId.OnError {
                 if (heartBeatClosure != null) {
                     heartbeatDone = heartBeatClosure;
                 } else {
+                    // 默认回调：处理心跳响应,比较term，如果落后则stepdown达到current term，否则继续调度下次心跳
                     heartbeatDone = new RpcResponseClosureAdapter<AppendEntriesResponse>() {
 
                         @Override
@@ -737,7 +740,7 @@ public class Replicator implements ThreadId.OnError {
                 this.appendEntriesCounter++;
                 this.state = State.Probe;
                 final int stateVersion = this.version;
-                // 发送请求
+                // 发送探针请求
                 final int seq = getAndIncrementReqSeq();
                 final Future<Message> rpcFuture = this.rpcService.appendEntries(this.options.getPeerId().getEndpoint(),
                     request, -1, new RpcResponseClosureAdapter<AppendEntriesResponse>() {
@@ -823,7 +826,7 @@ public class Replicator implements ThreadId.OnError {
             return null;
         }
 
-        // Register replicator metric set.
+        // Register replicator metric set.监控相关组件
         final MetricRegistry metricRegistry = opts.getNode().getNodeMetrics().getMetricRegistry();
         if (metricRegistry != null) {
             try {
@@ -1320,7 +1323,20 @@ public class Replicator implements ThreadId.OnError {
         releaseReader();
     }
 
-    // 处理AppendEntries响应
+    /**
+     * 处理AppendEntries响应
+     * 1.startIndex不匹配，清空inflights，重新发送探针请求
+     * 2.!status.isOk, 证明请求无法到达，阻塞该节点一段时间后重新发送
+     * 3.响应success为false:
+     *  a.返回更高的term，stepDown
+     *  b.响应返回的index比当前的小，证明节点的日志比当前节点少，更新index继续发送探针请求
+     *  c.节点包含旧term的日志(需要截断)，将index逐渐递减，测试需要保留的index
+     *  继续发送探针请求
+     * 4.响应success为true:
+     *  a.term不匹配，清空inflights，切换为Probe状态，重新发送探针请求
+     *  b.entriesSize > 0，代表是AppendEntries请求的响应，尝试提交[first_log_index, last_log_index]之间的日志
+     *  c.探针请求完成，切换为复制状态
+     */
     private static boolean onAppendEntriesReturned(final ThreadId id, final Inflight inflight, final Status status,
                                                    final AppendEntriesRequest request,
                                                    final AppendEntriesResponse response, final long rpcSendTime,
@@ -1412,10 +1428,12 @@ public class Replicator implements ThreadId.OnError {
             if (response.getLastLogIndex() + 1 < r.nextIndex) {
                 LOG.debug("LastLogIndex at peer={} is {}", r.options.getPeerId(), response.getLastLogIndex());
                 // The peer contains less logs than leader
+                // 节点的日志比当前节点少，更新index继续发送探针请求
                 r.nextIndex = response.getLastLogIndex() + 1;
             } else {
                 // The peer contains logs from old term which should be truncated,
                 // decrease _last_log_at_peer by one to test the right index to keep
+                // 节点包含旧term的日志(需要截断)，将index逐渐递减，测试需要保留的index
                 if (r.nextIndex > 1) {
                     LOG.debug("logIndex={} dismatch", r.nextIndex);
                     r.nextIndex--;
@@ -1442,6 +1460,7 @@ public class Replicator implements ThreadId.OnError {
             id.unlock();
             return false;
         }
+        // 更新rpc发送的时间戳
         if (rpcSendTime > r.lastRpcSendTimestamp) {
             r.lastRpcSendTimestamp = rpcSendTime;
         }
@@ -1476,11 +1495,15 @@ public class Replicator implements ThreadId.OnError {
     private boolean fillCommonFields(final AppendEntriesRequest.Builder rb, long prevLogIndex, final boolean isHeartbeat) {
         final long prevLogTerm = this.options.getLogManager().getTerm(prevLogIndex);
         if (prevLogTerm == 0 && prevLogIndex != 0) {
+            // prevLogIndex之前的log已经被压缩
             if (!isHeartbeat) {
+                // 返回false，发送installSnapshot请求
                 Requires.requireTrue(prevLogIndex < this.options.getLogManager().getFirstLogIndex());
                 LOG.debug("logIndex={} was compacted", prevLogIndex);
                 return false;
             } else {
+                // 因为需要让follower下载侉快照，所以我们让prev_log_index和prev_log_term都等于0
+                // 这样follower只会更新leader的时间戳
                 // The log at prev_log_index has been compacted, which indicates
                 // we is or is going to install snapshot to the follower. So we let
                 // both prev_log_index and prev_log_term be 0 in the heartbeat

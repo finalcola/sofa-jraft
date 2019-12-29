@@ -1158,7 +1158,7 @@ public class NodeImpl implements Node, RaftServerService {
             // candidate状态，停止投票任务
             stopVoteTimer();
         } else if (this.state.compareTo(State.STATE_TRANSFERRING) <= 0) {
-            // 处于leader或leader转移状态, 清空投票箱
+            // 处于leader或leader转移状态, 停止stepDown的定时任务，清空投票箱
             stopStepDownTimer();
             this.ballotBox.clearPendingTasks();
             // signal fsm leader stop immediately
@@ -1845,7 +1845,7 @@ public class NodeImpl implements Node, RaftServerService {
             final long prevLogIndex = request.getPrevLogIndex();
             final long prevLogTerm = request.getPrevLogTerm();
             final long localPrevLogTerm = this.logManager.getTerm(prevLogIndex);
-            // 校验日志一致性
+            // 校验日志term一致性
             if (localPrevLogTerm != prevLogTerm) {
                 // 同一index的日志term不匹配，拒绝该请求
                 final long lastLogIndex = this.logManager.getLastLogIndex();
@@ -3162,6 +3162,7 @@ public class NodeImpl implements Node, RaftServerService {
                     this.groupId, this.serverId, this.state.name());
             }
 
+            // 来自旧term的请求，返回当前term
             if (request.getTerm() < this.currTerm) {
                 LOG.warn("Node {} ignore stale InstallSnapshotRequest from {}, term={}, currTerm={}.", getNodeId(),
                     request.getPeerId(), request.getTerm(), this.currTerm);
@@ -3171,6 +3172,7 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
             }
 
+            // 接收到leader的请求或接收更高term的响应，降级
             checkStepDown(request.getTerm(), serverId);
 
             if (!serverId.equals(this.leaderId)) {
@@ -3178,6 +3180,7 @@ public class NodeImpl implements Node, RaftServerService {
                     serverId, this.currTerm, this.leaderId);
                 // Increase the term by 1 and make both leaders step down to minimize the
                 // loss of split brain
+                // leader冲突，将term+1，让两个leader都降级，减少脑裂损失
                 stepDown(request.getTerm() + 1, false, new Status(RaftError.ELEADERCONFLICT,
                     "More than one leader in the same term."));
                 return InstallSnapshotResponse.newBuilder() //
@@ -3197,6 +3200,7 @@ public class NodeImpl implements Node, RaftServerService {
                     getNodeId(), request.getServerId(), request.getMeta().getLastIncludedIndex(), request.getMeta()
                         .getLastIncludedTerm(), this.logManager.getLastLogId(false));
             }
+            // 下载快照
             this.snapshotExecutor.installSnapshot(request, InstallSnapshotResponse.newBuilder(), done);
             return null;
         } finally {
