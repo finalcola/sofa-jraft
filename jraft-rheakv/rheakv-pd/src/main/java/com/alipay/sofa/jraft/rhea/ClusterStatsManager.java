@@ -72,6 +72,7 @@ public final class ClusterStatsManager {
         return this.regionStatsTable.size();
     }
 
+    // 添加或更新leaderTable中的leader
     public void addOrUpdateLeader(final long storeId, final long regionId) {
         Set<Long> regionTable = this.leaderTable.get(storeId);
         if (regionTable == null) {
@@ -81,6 +82,7 @@ public final class ClusterStatsManager {
                 regionTable = newRegionTable;
             }
         }
+        // 删除以regionId为leader的table
         if (regionTable.add(regionId)) {
             for (final Map.Entry<Long, Set<Long>> entry : this.leaderTable.entrySet()) {
                 if (storeId == entry.getKey()) {
@@ -91,21 +93,24 @@ public final class ClusterStatsManager {
         }
     }
 
-    // Looking for a model worker
+    // Looking for a model worker. 获取leader数量最多的storeId列表
     public Pair<Set<Long /* storeId */>, Integer /* leaderCount */> findModelWorkerStores(final int above) {
         final Set<Map.Entry<Long, Set<Long>>> values = this.leaderTable.entrySet();
         if (values.isEmpty()) {
             return Pair.of(Collections.emptySet(), 0);
         }
+        // 找出存在leader region最多的storeId
         final Map.Entry<Long, Set<Long>> modelWorker = Collections.max(values, (o1, o2) -> {
             final int o1Val = o1.getValue() == null ? 0 : o1.getValue().size();
             final int o2Val = o2.getValue() == null ? 0 : o2.getValue().size();
             return Integer.compare(o1Val, o2Val);
         });
+        // leader数量需要大于above
         final int maxLeaderCount = modelWorker.getValue().size();
         if (maxLeaderCount <= above) {
             return Pair.of(Collections.emptySet(), maxLeaderCount);
         }
+        // 获取大于(可能中途有变更)等于maxLeaderCount的storeId列表
         final Set<Long> modelWorkerStoreIds = new HashSet<>();
         for (final Map.Entry<Long, Set<Long>> entry : values) {
             if (entry.getValue().size() >= maxLeaderCount) {
@@ -147,6 +152,7 @@ public final class ClusterStatsManager {
         }
     }
 
+    // 获取负载最大的region(key数量最多的region)
     public Pair<Region, RegionStats> findModelWorkerRegion() {
         if (this.regionStatsTable.isEmpty()) {
             return null;

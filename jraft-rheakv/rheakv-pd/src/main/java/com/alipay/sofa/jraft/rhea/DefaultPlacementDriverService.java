@@ -73,6 +73,7 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
 
     private final RheaKVStore   rheaKVStore;
 
+    // 管理集群元信息
     private MetadataStore       metadataStore;
     private HandlerInvoker      pipelineInvoker;
     private Pipeline            pipeline;
@@ -92,11 +93,12 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         }
         Requires.requireNonNull(opts, "placementDriverServerOptions");
         this.metadataStore = new DefaultMetadataStore(this.rheaKVStore);
-        final ThreadPoolExecutor threadPool = createPipelineExecutor(opts);
+        final ThreadPoolExecutor threadPool = createPipelineExecutor(opts);/*根据配置创建线程池*/
         if (threadPool != null) {
             this.pipelineInvoker = new DefaultHandlerInvoker(threadPool);
         }
         this.pipeline = new DefaultPipeline(); //
+        // 为pipeline添加handler
         initPipeline(this.pipeline);
         LOG.info("[DefaultPlacementDriverService] start successfully, options: {}.", opts);
         return this.started = true;

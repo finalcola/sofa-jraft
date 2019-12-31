@@ -147,8 +147,10 @@ public class PlacementDriverServer implements Lifecycle<PlacementDriverServerOpt
             throw new IllegalArgumentException("Only support single region for [PlacementDriverServer]");
         }
         this.regionEngine = regionEngines.get(0);
+        // 监听leader状态更新事件的监听器
         this.rheaKVStore.addLeaderStateListener(this.regionEngine.getRegion().getId(),
             ((DefaultPlacementDriverService) this.placementDriverService));
+        // 添加rpc处理器,会将所有请求委托到placementDriverService处理
         addPlacementDriverProcessor(storeEngine.getRpcServer());
         LOG.info("[PlacementDriverServer] start successfully, options: {}.", opts);
         return this.started = true;

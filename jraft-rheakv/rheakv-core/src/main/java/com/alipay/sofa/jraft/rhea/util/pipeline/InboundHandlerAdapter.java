@@ -27,6 +27,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.event.MessageEvent;
  */
 public abstract class InboundHandlerAdapter<I> extends HandlerAdapter implements InboundHandler {
 
+    // 校验泛型I和参数的泛型是否匹配
     private final TypeParameterMatcher matcher;
 
     protected InboundHandlerAdapter() {

@@ -56,6 +56,7 @@ public class SplittingJudgeByApproximateKeysHandler extends InboundHandlerAdapte
         final RegionHeartbeatRequest request = event.getMessage();
         final long clusterId = request.getClusterId();
         final ClusterStatsManager clusterStatsManager = ClusterStatsManager.getInstance(clusterId);
+        // 更新regionStats
         clusterStatsManager.addOrUpdateRegionStats(request.getRegionStatsList());
         final Set<Long> stores = metadataStore.unsafeGetStoreIds(clusterId);
         if (stores == null || stores.isEmpty()) {
@@ -65,7 +66,9 @@ public class SplittingJudgeByApproximateKeysHandler extends InboundHandlerAdapte
             // one store one region is perfect
             return;
         }
+        // 获取负载最大的region(key数量最多的region)
         final Pair<Region, RegionStats> modelWorker = clusterStatsManager.findModelWorkerRegion();
+        // 判断是否需要分割region(key数量需要达到请求设定的阈值)
         if (!isSplitNeeded(request, modelWorker)) {
             return;
         }
@@ -81,15 +84,18 @@ public class SplittingJudgeByApproximateKeysHandler extends InboundHandlerAdapte
         event.addInstruction(instruction);
     }
 
+    // 是否需要分割region
     private boolean isSplitNeeded(final RegionHeartbeatRequest request, final Pair<Region, RegionStats> modelWorker) {
         if (modelWorker == null) {
             return false;
         }
         final long modelApproximateKeys = modelWorker.getValue().getApproximateKeys();
+        // 1.需要请求中设定的超过阈值
         if (request.getLeastKeysOnSplit() > modelApproximateKeys) {
             return false;
         }
         final Region modelRegion = modelWorker.getKey();
+        // 2.负载最大的region还包含在region列表中
         final List<Pair<Region, RegionStats>> regionStatsList = request.getRegionStatsList();
         for (final Pair<Region, RegionStats> p : regionStatsList) {
             if (modelRegion.equals(p.getKey())) {

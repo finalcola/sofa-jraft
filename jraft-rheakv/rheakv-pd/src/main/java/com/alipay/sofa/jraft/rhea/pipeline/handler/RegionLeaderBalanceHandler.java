@@ -61,6 +61,7 @@ public class RegionLeaderBalanceHandler extends InboundHandlerAdapter<RegionPing
         final RegionHeartbeatRequest request = event.getMessage();
         final long clusterId = request.getClusterId();
         final long storeId = request.getStoreId();
+        // 获取对应的集群信息管理组件
         final ClusterStatsManager clusterStatsManager = ClusterStatsManager.getInstance(clusterId);
         final List<Pair<Region, RegionStats>> regionStatsList = request.getRegionStatsList();
         for (final Pair<Region, RegionStats> stats : regionStatsList) {
@@ -68,10 +69,11 @@ public class RegionLeaderBalanceHandler extends InboundHandlerAdapter<RegionPing
             clusterStatsManager.addOrUpdateLeader(storeId, region.getId());
         }
 
-        // check if the modelWorker
+        // check if the modelWorker.获取leader数量最多的storeId列表
         final Pair<Set<Long>, Integer> modelWorkers = clusterStatsManager.findModelWorkerStores(1);
         final Set<Long> modelWorkerStoreIds = modelWorkers.getKey();
         final int modelWorkerLeaders = modelWorkers.getValue();
+        // leader数量不是最多，不需要平衡
         if (!modelWorkerStoreIds.contains(storeId)) {
             return;
         }
@@ -85,14 +87,15 @@ public class RegionLeaderBalanceHandler extends InboundHandlerAdapter<RegionPing
                 continue;
             }
             final List<Endpoint> endpoints = Lists.transform(peers, Peer::getEndpoint);
-            final Map<Long, Endpoint> storeIds = metadataStore.unsafeGetStoreIdsByEndpoints(clusterId, endpoints);
-            // find lazyWorkers
+            final Map<Long/*storeId*/, Endpoint> storeIds = metadataStore.unsafeGetStoreIdsByEndpoints(clusterId, endpoints);
+            // find lazyWorkers. 获取leader数量最少的storeId列表
             final List<Pair<Long, Integer>> lazyWorkers = clusterStatsManager.findLazyWorkerStores(storeIds.keySet());
             if (lazyWorkers.isEmpty()) {
                 return;
             }
             for (int i = lazyWorkers.size() - 1; i >= 0; i--) {
                 final Pair<Long, Integer> worker = lazyWorkers.get(i);
+                // 与leader数最多的worker差距小于1，不需要转移
                 if (modelWorkerLeaders - worker.getValue() <= 1) { // no need to transfer
                     lazyWorkers.remove(i);
                 }
@@ -100,6 +103,7 @@ public class RegionLeaderBalanceHandler extends InboundHandlerAdapter<RegionPing
             if (lazyWorkers.isEmpty()) {
                 continue;
             }
+            // 根据运行状态，筛选出负载最小的storeId(比较busy、regionCount、bytesWritten、bytesRead、keysWritten、keysRead)
             final Pair<Long, Integer> laziestWorker = tryToFindLaziestWorker(clusterId, metadataStore, lazyWorkers);
             if (laziestWorker == null) {
                 continue;
@@ -107,6 +111,7 @@ public class RegionLeaderBalanceHandler extends InboundHandlerAdapter<RegionPing
             final Long lazyWorkerStoreId = laziestWorker.getKey();
             LOG.info("[Cluster: {}], lazy worker store is: {}, it has {} leaders.", clusterId, lazyWorkerStoreId,
                     laziestWorker.getValue());
+            // 添加迁移leader指令到event
             final Instruction.TransferLeader transferLeader = new Instruction.TransferLeader();
             transferLeader.setMoveToStoreId(lazyWorkerStoreId);
             transferLeader.setMoveToEndpoint(storeIds.get(lazyWorkerStoreId));
@@ -119,6 +124,7 @@ public class RegionLeaderBalanceHandler extends InboundHandlerAdapter<RegionPing
         }
     }
 
+    // 根据运行状态，筛选出负载最小的storeId(比较busy、regionCount、bytesWritten、bytesRead、keysWritten、keysRead)
     private Pair<Long, Integer> tryToFindLaziestWorker(final long clusterId, final MetadataStore metadataStore,
                                                        final List<Pair<Long, Integer>> lazyWorkers) {
         final List<Pair<Pair<Long, Integer>, StoreStats>> storeStatsList = Lists.newArrayList();

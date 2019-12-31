@@ -31,7 +31,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.InboundHandlerAdapter;
 import com.alipay.sofa.jraft.util.SPI;
 
 /**
- *
+ * 校验StoreHeartbeatRequest参数
  * @author jiachun.fjc
  */
 @SPI(name = "storeStatsValidator", priority = 100)

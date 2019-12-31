@@ -49,7 +49,7 @@ import com.alipay.sofa.jraft.util.BytesUtil;
 import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
- *
+ * 管理集群元信息
  * @author jiachun.fjc
  */
 public class DefaultMetadataStore implements MetadataStore {
@@ -78,6 +78,7 @@ public class DefaultMetadataStore implements MetadataStore {
             final String storeInfoKey = MetadataKeyHelper.getStoreInfoKey(clusterId, storeId);
             storeKeys.add(BytesUtil.writeUtf8(storeInfoKey));
         }
+        // 读取集群的存储信息
         final Map<ByteArray, byte[]> storeInfoBytes = this.rheaKVStore.bMultiGet(storeKeys);
         final List<Store> stores = Lists.newArrayListWithCapacity(storeInfoBytes.size());
         for (final byte[] storeBytes : storeInfoBytes.values()) {
@@ -271,11 +272,13 @@ public class DefaultMetadataStore implements MetadataStore {
     }
 
     private Set<Long> getClusterIndex(final long clusterId) {
+        // 获取clusterInfo对应的key
         final String key = MetadataKeyHelper.getClusterInfoKey(clusterId);
         final byte[] indexBytes = this.rheaKVStore.bGet(key);
         if (indexBytes == null) {
             return null;
         }
+        // byte数组处理
         final String strVal = BytesUtil.readUtf8(indexBytes);
         final String[] array = Strings.split(strVal, ',');
         if (array == null) {

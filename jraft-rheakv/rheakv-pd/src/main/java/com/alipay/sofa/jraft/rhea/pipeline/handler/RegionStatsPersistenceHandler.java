@@ -25,7 +25,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.InboundHandlerAdapter;
 import com.alipay.sofa.jraft.util.SPI;
 
 /**
- *
+ * 保存RegionStats
  * @author jiachun.fjc
  */
 @SPI(name = "regionStatsPersistence", priority = 70)

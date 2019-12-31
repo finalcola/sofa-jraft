@@ -36,6 +36,7 @@ public class StoreStatsPersistenceHandler extends InboundHandlerAdapter<StorePin
     public void readMessage(final HandlerContext ctx, final StorePingEvent event) throws Exception {
         final MetadataStore metadataStore = event.getMetadataStore();
         final StoreHeartbeatRequest request = event.getMessage();
+        // 序列化后，保存到rheaKVStore
         metadataStore.updateStoreStats(request.getClusterId(), request.getStats()).get(); // sync
     }
 }

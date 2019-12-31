@@ -643,6 +643,7 @@ public final class DefaultPipeline implements Pipeline {
         @Override
         public void handleOutbound(HandlerContext ctx, OutboundMessageEvent<?> event) throws Exception {
             if (event != null) {
+                // 通知回调的future
                 DefaultPipelineFuture.received(event.getInvokeId(), event.getMessage());
             }
         }

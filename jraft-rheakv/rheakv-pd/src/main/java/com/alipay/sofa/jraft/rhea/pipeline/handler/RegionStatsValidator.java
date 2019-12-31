@@ -36,7 +36,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.InboundHandlerAdapter;
 import com.alipay.sofa.jraft.util.SPI;
 
 /**
- *
+ * 校验RegionHeartbeatRequest参数
  * @author jiachun.fjc
  */
 @SPI(name = "regionStatsValidator", priority = 90)
