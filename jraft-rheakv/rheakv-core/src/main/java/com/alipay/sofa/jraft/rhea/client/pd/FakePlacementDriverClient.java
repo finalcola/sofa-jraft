@@ -50,6 +50,7 @@ public class FakePlacementDriverClient extends AbstractPlacementDriverClient {
             LOG.info("[FakePlacementDriverClient] already started.");
             return true;
         }
+        // 初始化cli组件、rpc组件、RegionTable
         super.init(opts);
         LOG.info("[FakePlacementDriverClient] start successfully, options: {}.", opts);
         return this.started = true;
@@ -66,6 +67,7 @@ public class FakePlacementDriverClient extends AbstractPlacementDriverClient {
         // NO-OP
     }
 
+    // 返回配置中的Region信息
     @Override
     public Store getStoreMetadata(final StoreEngineOptions opts) {
         final Store store = new Store();
@@ -74,6 +76,7 @@ public class FakePlacementDriverClient extends AbstractPlacementDriverClient {
         store.setId(-1);
         store.setEndpoint(opts.getServerAddress());
         for (final RegionEngineOptions rOpts : rOptsList) {
+            // 根据配置创建Region
             regionList.add(getLocalRegionMetadata(rOpts));
         }
         store.setRegions(regionList);

@@ -1298,7 +1298,7 @@ public class NodeImpl implements Node, RaftServerService {
                 entries.add(task.entry);
             }
             // 写入日志
-            this.logManager.appendEntries(entries, new LeaderStableClosure(entries)/*该回调用于写入本地成功后，更新pendingIndex的票数信息*/);
+            this.logManager.appendEntries(entries, new LeaderStableClosure(entries)/*该回调用于写入本地成功后，尝试commit,更新pendingIndex的票数信息*/);
             // update conf.first
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
         } finally {
@@ -1519,6 +1519,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
         Requires.requireNonNull(task, "Null task");
 
+        // 将数据设置到LogEntry
         final LogEntry entry = new LogEntry();
         entry.setData(task.getData());
         int retryTimes = 0;

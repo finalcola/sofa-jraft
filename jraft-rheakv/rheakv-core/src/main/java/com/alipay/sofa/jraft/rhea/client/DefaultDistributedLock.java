@@ -77,16 +77,22 @@ class DefaultDistributedLock extends DistributedLock<byte[]> {
     @Override
     protected Owner internalTryLock(final byte[] ctx) {
         final byte[] internalKey = getInternalKey();
+        // 获取申请者标识
         final Acquirer acquirer = getAcquirer();
         acquirer.setContext(ctx);
+        // 尝试加锁
         final CompletableFuture<Owner> future = this.rheaKVStore.tryLockWith(internalKey, false, acquirer);
+        // 同步获取结果
         final Owner owner = FutureHelper.get(future);
+        // 失败
         if (!owner.isSuccess()) {
+            // 更新锁的拥有者
             updateOwner(owner);
             return owner;
         }
 
         // if success, update the fencing token in acquirer
+        // 更新owner和acquirer.fencingToken
         updateOwnerAndAcquirer(owner);
 
         final ScheduledExecutorService watchdog = getWatchdog();

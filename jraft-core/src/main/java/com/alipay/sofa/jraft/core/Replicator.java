@@ -490,6 +490,7 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * Adds a in-flight request
+     * 记录发送的请求
      * @param reqType   type of request
      * @param count     count if request
      * @param size      size in bytes
@@ -762,12 +763,15 @@ public class Replicator implements ThreadId.OnError {
         }
     }
 
+    // 从底层存储获取对应的LogEntry，添加到emb和dataBuffer中
     boolean prepareEntry(final long nextSendingIndex, final int offset, final RaftOutter.EntryMeta.Builder emb,
                          final RecyclableByteBufferList dateBuffer) {
+        // body大小超过阈值
         if (dateBuffer.getCapacity() >= this.raftOptions.getMaxBodySize()) {
             return false;
         }
         final long logIndex = nextSendingIndex + offset;
+        // 获取底层的LogEntry
         final LogEntry entry = this.options.getLogManager().getEntry(logIndex);
         if (entry == null) {
             return false;
@@ -778,12 +782,14 @@ public class Replicator implements ThreadId.OnError {
         }
         emb.setType(entry.getType());
         if (entry.getPeers() != null) {
+            // 配置类型的LogEntry
             Requires.requireTrue(!entry.getPeers().isEmpty(), "Empty peers at logIndex=%d", logIndex);
             fillMetaPeers(emb, entry);
         } else {
             Requires.requireTrue(entry.getType() != EnumOutter.EntryType.ENTRY_TYPE_CONFIGURATION,
                 "Empty peers but is ENTRY_TYPE_CONFIGURATION type at logIndex=%d", logIndex);
         }
+        // 添加到buffer
         final int remaining = entry.getData() != null ? entry.getData().remaining() : 0;
         emb.setDataLen(remaining);
         if (entry.getData() != null) {
@@ -923,6 +929,7 @@ public class Replicator implements ThreadId.OnError {
         }
     }
 
+    // 当有新日志提交后，继续向follower发送AppendEntry请求
     static boolean continueSending(final ThreadId id, final int errCode) {
         if (id == null) {
             //It was destroyed already
@@ -942,6 +949,7 @@ public class Replicator implements ThreadId.OnError {
             r.sendEmptyEntries(false);
         } else if (errCode != RaftError.ESTOP.getNumber()) {
             // id is unlock in _send_entries
+            // 发送AppendEntry请求
             r.sendEntries();
         } else {
             LOG.warn("Replicator {} stops sending entries.", id);
@@ -1522,12 +1530,14 @@ public class Replicator implements ThreadId.OnError {
         return true;
     }
 
+    // 复制已经追上最新的日志，需要等待新日志添加
     private void waitMoreEntries(final long nextWaitIndex) {
         try {
             LOG.debug("Node {} waits more entries", this.options.getNode().getNodeId());
             if (this.waitId >= 0) {
                 return;
             }
+            // 等待新日志写入
             this.waitId = this.options.getLogManager().wait(nextWaitIndex - 1,
                 (arg, errorCode) -> continueSending((ThreadId) arg, errorCode), this.id);
             this.statInfo.runningState = RunningState.IDLE;
@@ -1587,20 +1597,25 @@ public class Replicator implements ThreadId.OnError {
         try {
             for (int i = 0; i < maxEntriesSize; i++) {
                 final RaftOutter.EntryMeta.Builder emb = RaftOutter.EntryMeta.newBuilder();
+                // 从底层存储获取对应的LogEntry，添加到emb和byteBufList中
                 if (!prepareEntry(nextSendingIndex, i, emb, byteBufList)) {
                     break;
                 }
                 rb.addEntries(emb.build());
             }
+            // 获取到LogEntry为空
             if (rb.getEntriesCount() == 0) {
+                // index对应的日志已经被压缩到快照,发送InstallSnapshot请求
                 if (nextSendingIndex < this.options.getLogManager().getFirstLogIndex()) {
                     installSnapshot();
                     return false;
                 }
                 // _id is unlock in _wait_more
+                // 需要等待新日志写入再继续发送
                 waitMoreEntries(nextSendingIndex);
                 return false;
             }
+            // 将日志data部分添加到rb
             if (byteBufList.getCapacity() > 0) {
                 dataBuf = ByteBufferCollector.allocateByRecyclers(byteBufList.getCapacity());
                 for (final ByteBuffer b : byteBufList) {
@@ -1622,6 +1637,7 @@ public class Replicator implements ThreadId.OnError {
                 request.getCommittedIndex(), request.getPrevLogIndex(), request.getPrevLogTerm(), nextSendingIndex,
                 request.getEntriesCount());
         }
+        // 更新状态和index
         this.statInfo.runningState = RunningState.APPENDING_ENTRIES;
         this.statInfo.firstLogIndex = rb.getPrevLogIndex() + 1;
         this.statInfo.lastLogIndex = rb.getPrevLogIndex() + rb.getEntriesCount();
@@ -1630,6 +1646,7 @@ public class Replicator implements ThreadId.OnError {
         final int v = this.version;
         final long monotonicSendTimeMs = Utils.monotonicMs();
         final int seq = getAndIncrementReqSeq();
+        // 发送AppendEntries请求
         final Future<Message> rpcFuture = this.rpcService.appendEntries(this.options.getPeerId().getEndpoint(),
             request, -1, new RpcResponseClosureAdapter<AppendEntriesResponse>() {
 
@@ -1641,6 +1658,7 @@ public class Replicator implements ThreadId.OnError {
                 }
 
             });
+        // 添加到inflights
         addInflight(RequestType.AppendEntries, nextSendingIndex, request.getEntriesCount(), request.getData().size(),
             seq, rpcFuture);
         return true;

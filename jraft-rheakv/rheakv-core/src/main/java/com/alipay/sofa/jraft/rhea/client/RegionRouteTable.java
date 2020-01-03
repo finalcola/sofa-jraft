@@ -113,6 +113,7 @@ public class RegionRouteTable {
         return region;
     }
 
+    // 更新region路由
     public void addOrUpdateRegion(final Region region) {
         Requires.requireNonNull(region, "region");
         Requires.requireNonNull(region.getRegionEpoch(), "regionEpoch");

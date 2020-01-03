@@ -43,6 +43,7 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
     private static final Logger LOG = LoggerFactory.getLogger(RemotePlacementDriverClient.class);
 
     private String              pdGroupId;
+    // 带重试的rpc组件
     private MetadataRpcClient   metadataRpcClient;
 
     private boolean             started;
@@ -51,6 +52,7 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
         super(clusterId, clusterName);
     }
 
+    // 更新group的配置信息、创建rpc组件、刷新路由表
     @Override
     public synchronized boolean init(final PlacementDriverOptions opts) {
         if (this.started) {
@@ -66,8 +68,11 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
         if (Strings.isBlank(initialPdServers)) {
             throw new IllegalArgumentException("opts.initialPdServerList must not be blank");
         }
+        // 更新group的配置信息(节点列表)
         RouteTable.getInstance().updateConfiguration(this.pdGroupId, initialPdServers);
+        // 创建rpc组件
         this.metadataRpcClient = new MetadataRpcClient(super.pdRpcService, 3);
+        // 刷新路由表(向pd发送GetClusterInfo请求)
         refreshRouteTable();
         LOG.info("[RemotePlacementDriverClient] start successfully, options: {}.", opts);
         return this.started = true;
@@ -81,6 +86,7 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
 
     @Override
     protected void refreshRouteTable() {
+        // 向leader发送GetGlusterInfo请求
         final Cluster cluster = this.metadataRpcClient.getClusterInfo(this.clusterId);
         if (cluster == null) {
             LOG.warn("Cluster info is empty: {}.", this.clusterId);
@@ -91,6 +97,7 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
             LOG.error("Stores info is empty: {}.", this.clusterId);
             return;
         }
+        // 刷新路由表
         for (final Store store : stores) {
             final List<Region> regions = store.getRegions();
             if (regions == null || regions.isEmpty()) {
@@ -131,10 +138,13 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
 
     @Override
     public Endpoint getPdLeader(final boolean forceRefresh, final long timeoutMillis) {
+        // 获取group的leaderId(根据参数forceRefresh决定是否刷新路由表)
         PeerId leader = getLeader(this.pdGroupId, forceRefresh, timeoutMillis);
         if (leader == null && !forceRefresh) {
+            // 获取失败，重试且强制刷新路由表
             leader = getLeader(this.pdGroupId, true, timeoutMillis);
         }
+        // 未获取到leaderId，抛出异常
         if (leader == null) {
             throw new RouteTableException("no placement driver leader in group: " + this.pdGroupId);
         }

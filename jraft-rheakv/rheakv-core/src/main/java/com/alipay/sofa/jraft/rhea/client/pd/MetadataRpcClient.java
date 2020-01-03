@@ -55,6 +55,7 @@ public class MetadataRpcClient {
         return FutureHelper.get(future);
     }
 
+    // 向group的leader发送GetCluster请求
     private void internalGetClusterInfo(final long clusterId, final CompletableFuture<Cluster> future,
                                         final int retriesLeft, final Errors lastCause) {
         final RetryRunner retryRunner = retryCause -> internalGetClusterInfo(clusterId, future,

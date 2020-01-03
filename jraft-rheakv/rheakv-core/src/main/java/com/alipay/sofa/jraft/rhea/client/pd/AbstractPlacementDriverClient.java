@@ -76,6 +76,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         this.clusterName = clusterName;
     }
 
+    // 初始化cli组件、rpc组件、RegionTable
     @Override
     public synchronized boolean init(final PlacementDriverOptions opts) {
         initCli(opts.getCliOptions());
@@ -100,6 +101,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
                     // if blank, extends parent's value
                     regionRouteTableOpts.setInitialServerList(initialServerList);
                 }
+                // 根据配置初始化RegionTable
                 initRouteTableByRegion(regionRouteTableOpts);
             }
         }
@@ -236,6 +238,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return leader.getEndpoint();
     }
 
+    // 获取group的leaderId(根据参数forceRefresh决定是否刷新路由表)
     protected PeerId getLeader(final String raftGroupId, final boolean forceRefresh, final long timeoutMillis) {
         final RouteTable routeTable = RouteTable.getInstance();
         if (forceRefresh) {
@@ -246,6 +249,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
             Throwable lastCause = null;
             for (;;) {
                 try {
+                    // 向group内所有节点发送GetLeader请求,更新leader信息
                     final Status st = routeTable.refreshLeader(this.cliClientService, raftGroupId, 2000);
                     if (st.isOk()) {
                         break;
@@ -257,6 +261,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
                     lastCause = t;
                     error.append(t.getMessage());
                 }
+                // 未到超时时间，重试
                 if (System.currentTimeMillis() < deadline) {
                     LOG.debug("Fail to find leader, retry again, {}.", error);
                     error.append(", ");
@@ -266,11 +271,13 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
                         ThrowUtil.throwException(e);
                     }
                 } else {
+                    // 抛出异常
                     throw lastCause != null ? new RouteTableException(error.toString(), lastCause)
                         : new RouteTableException(error.toString());
                 }
             }
         }
+        // 获取group的leaderId
         return routeTable.selectLeader(raftGroupId);
     }
 
@@ -357,6 +364,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return rpcClient;
     }
 
+    // 根据配置初始化RegionTable
     protected void initRouteTableByRegion(final RegionRouteTableOptions opts) {
         final long regionId = Requires.requireNonNull(opts.getRegionId(), "opts.regionId");
         final byte[] startKey = opts.getStartKeyBytes();

@@ -48,6 +48,7 @@ import com.alipay.sofa.jraft.util.Requires;
 public abstract class DistributedLock<T> {
 
     private final T                        internalKey;
+    // 锁的申请者信息(id、lease)
     private final Acquirer                 acquirer;
     private final ScheduledExecutorService watchdog;
 
@@ -197,6 +198,7 @@ public abstract class DistributedLock<T> {
         this.owner = owner;
     }
 
+    // 更新owner和acquirer.fencingToken
     protected void updateOwnerAndAcquirer(final Owner owner) {
         this.owner = owner;
         if (this.owner != null) {

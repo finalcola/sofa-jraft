@@ -59,7 +59,7 @@ public class RouteTable {
 
     /**
      * Update configuration of group in route table.
-     *
+     * 更新group的配置信息(节点列表)
      * @param groupId raft group id
      * @param conf    configuration to update
      * @return true on success
@@ -73,6 +73,7 @@ public class RouteTable {
         final long stamp = stampedLock.writeLock();
         try {
             gc.conf = conf;
+            // 如果leader不在列表中，则清空leader
             if (gc.leader != null && !gc.conf.contains(gc.leader)) {
                 gc.leader = null;
             }
@@ -96,7 +97,7 @@ public class RouteTable {
 
     /**
      * Update configuration of group in route table.
-     *
+     * 更新group的配置信息(节点列表)
      * @param groupId raft group id
      * @param confStr configuration string
      * @return true on success
@@ -105,6 +106,7 @@ public class RouteTable {
         Requires.requireTrue(!StringUtils.isBlank(groupId), "Blank group id");
         Requires.requireTrue(!StringUtils.isBlank(confStr), "Blank configuration");
 
+        // 更新group的配置信息(节点列表)
         final Configuration conf = new Configuration();
         if (conf.parse(confStr)) {
             return updateConfiguration(groupId, conf);
@@ -218,7 +220,7 @@ public class RouteTable {
 
     /**
      * Blocking the thread until query_leader finishes.
-     *
+     * 向group内所有节点发送GetLeader请求, 根据响应更新leaderId
      * @param groupId   raft group id
      * @param timeoutMs timeout millis
      * @return operation status
@@ -239,7 +241,9 @@ public class RouteTable {
         rb.setGroupId(groupId);
         final CliRequests.GetLeaderRequest request = rb.build();
         TimeoutException timeoutException = null;
+        // 向group内所有节点发送GetLeader请求，直到返回成功
         for (final PeerId peer : conf) {
+            // 跳过无法连接的节点
             if (!cliClientService.connect(peer.getEndpoint())) {
                 if (st.isOk()) {
                     st.setError(-1, "Fail to init channel to %s", peer);
@@ -249,6 +253,7 @@ public class RouteTable {
                 }
                 continue;
             }
+            // 发送rpc请求，请求leader节点
             final Future<Message> result = cliClientService.getLeader(peer.getEndpoint(), request, null);
             try {
                 final Message msg = result.get(timeoutMs, TimeUnit.MILLISECONDS);
@@ -260,6 +265,7 @@ public class RouteTable {
                         st.setError(-1, "%s, %s", savedMsg, ((RpcRequests.ErrorResponse) msg).getErrorMsg());
                     }
                 } else {
+                    // 更新leader
                     final CliRequests.GetLeaderResponse response = (CliRequests.GetLeaderResponse) msg;
                     updateLeader(groupId, response.getLeaderId());
                     return Status.OK();

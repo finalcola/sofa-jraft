@@ -41,6 +41,7 @@ public class RheaKVStoreOptions {
     // follower node can also ensure consistent reading, but the reading
     // delay may increase due to the delay of the follower synchronization
     // data.
+    // 是否只从leader节点读取，从follower节点读取也可以保证一致性读，但是可能延时会更长
     private boolean                onlyLeaderRead        = true;
     private RpcOptions             rpcOptions            = RpcOptionsConfigured.newDefaultConfig();
     private int                    failoverRetries       = 2;

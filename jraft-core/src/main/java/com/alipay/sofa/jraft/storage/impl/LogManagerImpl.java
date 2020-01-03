@@ -87,6 +87,7 @@ public class LogManagerImpl implements LogManager {
     private final Lock                                       readLock               = this.lock.readLock();
     private volatile boolean                                 stopped;
     private volatile boolean                                 hasError;
+    // 分配waitId
     private long                                             nextWaitId;
     // 磁盘末尾log的index和term
     private LogId                                            diskId                 = new LogId(0, 0);
@@ -97,7 +98,8 @@ public class LogManagerImpl implements LogManager {
     private volatile long                                    firstLogIndex;
     private volatile long                                    lastLogIndex;
     private volatile LogId                                   lastSnapshotId         = new LogId(0, 0);
-    private final Map<Long, WaitMeta>                        waitMap                = new HashMap<>();
+    // 记录等待新日志写入的回调
+    private final Map<Long/*waitId*/, WaitMeta>                        waitMap                = new HashMap<>();
     private Disruptor<StableClosureEvent>                    disruptor;
     private RingBuffer<StableClosureEvent>                   diskQueue;
     private RaftOptions                                      raftOptions;
@@ -363,7 +365,7 @@ public class LogManagerImpl implements LogManager {
                 }
             }
             doUnlock = false;
-            // 唤醒所有等待锁的任务
+            // 唤醒所有等待新日志写入的回调任务(继续发送LogEntry)
             if (!wakeupAllWaiter(this.writeLock)) {
                 notifyLastLogIndexListeners();
             }
@@ -408,7 +410,7 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
-    // 唤醒所有等待锁的任务
+    // 唤醒所有等待新日志写入的回调任务
     private boolean wakeupAllWaiter(final Lock lock) {
         // 等待队列为空，解锁后返回
         if (this.waitMap.isEmpty()) {
@@ -421,7 +423,7 @@ public class LogManagerImpl implements LogManager {
         this.waitMap.clear();
         lock.unlock();
 
-        // 重新调度等待任务
+        // 通知回调
         final int waiterCount = wms.size();
         for (int i = 0; i < waiterCount; i++) {
             final WaitMeta wm = wms.get(i);
@@ -1142,20 +1144,25 @@ public class LogManagerImpl implements LogManager {
         return current;
     }
 
+    // 等待新日志写入，并通知callback
     @Override
     public long wait(final long expectedLastLogIndex, final NewLogCallback cb, final Object arg) {
         final WaitMeta wm = new WaitMeta(cb, arg, 0);
+        // 记录新日志写入需要通知的回调信息
         return notifyOnNewLog(expectedLastLogIndex, wm);
     }
 
+    // 记录新日志写入需要通知的回调信息
     private long notifyOnNewLog(final long expectedLastLogIndex, final WaitMeta wm) {
         this.writeLock.lock();
         try {
+            // 已经有新有日志 或 已停止，通知回调
             if (expectedLastLogIndex != this.lastLogIndex || this.stopped) {
                 wm.errorCode = this.stopped ? RaftError.ESTOP.getNumber() : 0;
                 Utils.runInThread(() -> runOnNewLog(wm));
                 return 0L;
             }
+            // 分配waitId，并记录到waitMap
             if (this.nextWaitId == 0) { //skip 0
                 ++this.nextWaitId;
             }

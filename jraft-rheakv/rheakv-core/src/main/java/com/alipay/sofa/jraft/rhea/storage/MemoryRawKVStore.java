@@ -346,6 +346,7 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
                 if (prevOwner == null) {
                     // no others own this lock
                     if (keepLease) {
+                        // 申请者希望继续维持锁，但是已经前拥有者被销毁了，返回失败
                         // it wants to keep the lease but too late, will return failure
                         owner = builder //
                             // set acquirer id
@@ -358,8 +359,9 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
                     }
                     // is first time to try lock (another possibility is that this lock has been deleted),
                     // will return successful
+                    // 第一次申请锁(也可能是该锁已经被删除了),返回成功
                     owner = builder //
-                        // set acquirer id, now it will own the lock
+                        // set acquirer id, now it will own the lock.设置为申请者的id
                         .id(acquirer.getId())
                         // set a new deadline
                         .deadlineMillis(now + timeoutMillis)
@@ -377,12 +379,15 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
                     break;
                 }
 
+                // 锁已经被抢占，检查是否过期
                 // this lock has an owner, check if it has expired
                 final long remainingMillis = prevOwner.getDeadlineMillis() - now;
                 if (remainingMillis < 0) {
                     // the previous owner is out of lease
+                    // 前拥有者已经过期
                     if (keepLease) {
                         // it wants to keep the lease but too late, will return failure
+                        // 当前申请者希望保持任期，失败
                         owner = builder //
                             // still previous owner id
                             .id(prevOwner.getId())
@@ -397,6 +402,7 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
                         break;
                     }
                     // create new lock owner
+                    // 创建新owner
                     owner = builder //
                         // set acquirer id, now it will own the lock
                         .id(acquirer.getId())
@@ -417,15 +423,19 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
                 }
 
                 // the previous owner is not out of lease (remainingMillis >= 0)
+                // 前拥有者并未过期，检查是否是重入锁(owner是否相同)
                 final boolean isReentrant = prevOwner.isSameAcquirer(acquirer);
                 if (isReentrant) {
+                    // 相同的owner,重入锁
                     // is the same old friend come back (reentrant lock)
                     if (keepLease) {
                         // the old friend only wants to keep lease of lock
+                        // owner希望继续持有锁
                         owner = builder //
                             // still previous owner id
                             .id(prevOwner.getId())
                             // update the deadline to keep lease
+                            // 更新deadline
                             .deadlineMillis(now + timeoutMillis)
                             // success to keep lease
                             .remainingMillis(DistributedLock.OwnerBuilder.KEEP_LEASE_SUCCESS)
@@ -440,6 +450,7 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
                         this.lockerDB.put(wrappedKey, owner);
                         break;
                     }
+                    // 更新deadline
                     // now we are sure that is an old friend who is back again (reentrant lock)
                     owner = builder //
                         // still previous owner id
@@ -460,6 +471,7 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
                     break;
                 }
 
+                // 持有锁的owner任期未结束，且不是相同的owner，返回失败
                 // the lock is exist and also prev locker is not the same as current
                 owner = builder //
                     // set previous owner id to tell who is the real owner
